@@ -8,7 +8,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("App")
         self.setGeometry(600,300,500,500)
-        self.setWindowIcon(QIcon('resources/icon.jpeg'))
+        self.setWindowIcon(QIcon('resources/icon.png'))
     
 
 def main():
