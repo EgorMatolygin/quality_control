@@ -1,7 +1,7 @@
 # presentation/main_window.py
 from PyQt5.QtWidgets import (QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QFileDialog, QMessageBox, QLabel, QGroupBox, QFormLayout, QComboBox, QLineEdit, 
-                            QGridLayout, QScrollArea, QCheckBox, QTableWidget,QTableWidgetItem)
+                            QGridLayout, QScrollArea, QCheckBox, QTableWidget,QTableWidgetItem, QStackedWidget)
 from PyQt5.QtGui import QIcon, QFont
 from PyQt5.QtCore import Qt
 from presentation.widgets.table_widget import TableWidget
@@ -11,22 +11,11 @@ from business.quality_calculator import QualityCalculator
 from data.data_manager import DataManager
 from data.database import PostgreSQLManager
 
-class MainWindow(QMainWindow):
-    def __init__(self):
+class InputPage(QWidget):
+    def __init__(self, parent):
         super().__init__()
-        self.setWindowTitle("Анализ качества продукции")
-        self.setGeometry(600, 300, 1000, 800)
-        self.setWindowIcon(QIcon('resources/icon.png'))
-        
-        # Инициализация компонентов
+        self.parent = parent
         self.init_ui()
-        
-        # Данные текущей сессии
-        self.current_static_data = None
-        self.current_dynamic_data = None
-
-        self.constraints = {}
-        self.current_params = []
 
     def init_ui(self):
         # Заголовок
@@ -53,13 +42,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.header)
         layout.addWidget(self.tabs)
         
-        # Центральный виджет
-        central_widget = QWidget()
-        central_widget.setLayout(layout)
-        self.setCentralWidget(central_widget)
         self.constraints_panel = self.create_constraints_panel()
         layout.insertWidget(1, self.constraints_panel)  # Размещаем после заголовка
 
+        self.setLayout(layout)
+        
 
     def create_static_tab(self):
         widget = QWidget()
@@ -73,6 +60,9 @@ class MainWindow(QMainWindow):
         self.btn_process_static.clicked.connect(lambda: self.process_data("static"))
         self.btn_calculate_static = QPushButton("Рассчитать индекс")
         self.btn_calculate_static.clicked.connect(lambda: self.calculate_index("static"))
+        self.btn_next_static = QPushButton("Анализировать →")
+        self.btn_next_static.clicked.connect(lambda: self.parent.show_results('static'))
+        self.btn_next_static.setEnabled(False)
         
         btn_layout.addWidget(self.btn_load_static)
         btn_layout.addWidget(self.btn_process_static)
@@ -81,11 +71,10 @@ class MainWindow(QMainWindow):
         # Таблица и график
         self.static_table = TableWidget()
         self.static_table.setMinimumWidth(800)
-        self.static_plot = PlotWidget(analysis_type="static")
         
         layout.addLayout(btn_layout)
         layout.addWidget(self.static_table)
-        layout.addWidget(self.static_plot)
+        layout.addWidget(self.btn_next_static)
         
         widget.setLayout(layout)
         return widget
@@ -102,19 +91,22 @@ class MainWindow(QMainWindow):
         self.btn_process_dynamic.clicked.connect(lambda: self.process_data("dynamic"))
         self.btn_calculate_dynamic = QPushButton("Рассчитать индекс")
         self.btn_calculate_dynamic.clicked.connect(lambda: self.calculate_index("dynamic"))
+        self.btn_next_dynamic = QPushButton("Анализировать →")
+        self.btn_next_dynamic.clicked.connect(lambda: self.parent.show_results('dynamic'))
+        self.btn_next_dynamic.setEnabled(False)
         
         btn_layout.addWidget(self.btn_load_dynamic)
         btn_layout.addWidget(self.btn_process_dynamic)
         btn_layout.addWidget(self.btn_calculate_dynamic)
+
         
         # Таблица и график
         self.dynamic_table = TableWidget()
         self.dynamic_table.setMinimumWidth(800)
-        self.dynamic_plot = PlotWidget(analysis_type="dynamic")
-        
+
         layout.addLayout(btn_layout)
         layout.addWidget(self.dynamic_table)
-        layout.addWidget(self.dynamic_plot)
+        layout.addWidget(self.btn_next_dynamic)
         
         widget.setLayout(layout)
         return widget
@@ -141,12 +133,14 @@ class MainWindow(QMainWindow):
                 db.save_raw_data(df)
 
                 if analysis_type == "static":
-                    self.current_static_data = df
+                    self.parent.current_static_data = df
+                    self.btn_next_static.setEnabled(True)
                     self.static_table.display_data(df, 50)
                 else:
-                    self.current_dynamic_data = df
+                    self.parent.current_dynamic_data = df
+                    self.btn_next_dynamic.setEnabled(True)
                     self.dynamic_table.display_data(df, 50)
-                    
+
                 QMessageBox.information(self, "Успех", "Данные успешно загружены!")
                 
             except Exception as e:
@@ -154,13 +148,13 @@ class MainWindow(QMainWindow):
 
     def process_data(self, analysis_type):
         try:
-            if analysis_type == "static" and self.current_static_data is not None:
-                processed_df = DataProcessor.preprocess_data(self.current_static_data)
-                self.current_static_data = processed_df
+            if analysis_type == "static" and self.parent.current_static_data is not None:
+                processed_df = DataProcessor.preprocess_data(self.parent.current_static_data)
+                self.parent.current_static_data = processed_df
                 self.static_table.display_data(processed_df)
-            elif analysis_type == "dynamic" and self.current_dynamic_data is not None:
-                processed_df = DataProcessor.preprocess_data(self.current_dynamic_data)
-                self.current_dynamic_data = processed_df
+            elif analysis_type == "dynamic" and self.parent.current_dynamic_data is not None:
+                processed_df = DataProcessor.preprocess_data(self.parent.current_dynamic_data)
+                self.parent.current_dynamic_data = processed_df
                 self.dynamic_table.display_data(processed_df)
             else:
                 raise ValueError("Данные не загружены")
@@ -172,20 +166,18 @@ class MainWindow(QMainWindow):
 
     def calculate_index(self, analysis_type):
         try:
-            if analysis_type == "static" and self.current_static_data is not None:
+            if analysis_type == "static" and self.parent.current_static_data is not None:
                 result_df = QualityCalculator.calculate_quality_index(
-                    self.current_static_data,
-                    constraints=self.constraints,
+                    self.parent.current_static_data,
+                    constraints=self.parent.constraints,
                     analysis_type="static"
                 )
-                self.static_plot.update_plot(result_df)
-            elif analysis_type == "dynamic" and self.current_dynamic_data is not None:
+            elif analysis_type == "dynamic" and self.parent.current_dynamic_data is not None:
                 result_df = QualityCalculator.calculate_quality_index(
                     self.current_dynamic_data,
-                    constraints=self.constraints,
+                    constraints=self.parent.constraints,
                     analysis_type="dynamic"
                 )
-                self.dynamic_plot.update_plot(result_df)
             else:
                 raise ValueError("Данные не загружены")
                 
@@ -347,22 +339,22 @@ class MainWindow(QMainWindow):
             if c_type == "Допустимый диапазон":
                 min_val = float(self.min_input.text())
                 max_val = float(self.max_input.text())
-                self.constraints[param] = {'type': 'range', 'min': min_val, 'max': max_val}
+                self.parent.constraints[param] = {'type': 'range', 'min': min_val, 'max': max_val}
                 display_value = f"[{min_val} - {max_val}]"
                 
             elif c_type == "Минимальное значение":
                 min_val = float(self.min_input.text())
-                self.constraints[param] = {'type': 'min', 'value': min_val}
+                self.parent.constraints[param] = {'type': 'min', 'value': min_val}
                 display_value = f"≥ {min_val}"
                 
             elif c_type == "Максимальное значение":
                 max_val = float(self.max_input.text())
-                self.constraints[param] = {'type': 'max', 'value': max_val}
+                self.parent.constraints[param] = {'type': 'max', 'value': max_val}
                 display_value = f"≤ {max_val}"
                 
             elif c_type == "Фиксированное значение":
                 fixed_val = float(self.fixed_input.text())
-                self.constraints[param] = {'type': 'fixed', 'value': fixed_val}
+                self.parent.constraints[param] = {'type': 'fixed', 'value': fixed_val}
                 display_value = f"= {fixed_val}"
                 
             self._update_constraints_table(param, c_type, display_value)
@@ -383,5 +375,63 @@ class MainWindow(QMainWindow):
 
     def clear_constraints(self):
         """Очистка всех ограничений"""
-        self.constraints.clear()
+        self.parent.constraints.clear()
         self.constraints_table.setRowCount(0)
+
+class ResultsPage(QWidget):
+    def __init__(self, parent):
+        super().__init__()
+        self.parent = parent
+        self.init_ui()
+
+    def init_ui(self):
+        # Заголовок
+        self.header = QLabel("Результат", self)
+        self.header.setFont(QFont('Georgia', 16))
+        self.header.setAlignment(Qt.AlignCenter)
+        self.header.setStyleSheet("""
+            background-color: #666666;
+            color: #ffffff;
+            padding: 15px;
+            border-radius: 10px;
+        """)
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Анализ качества продукции")
+        self.setGeometry(600, 300, 1000, 800)
+        self.setWindowIcon(QIcon('resources/icon.png'))
+        
+        # Инициализация компонентов
+        self.init_ui()
+        
+        # Данные текущей сессии
+        self.current_static_data = None
+        self.current_dynamic_data = None
+
+        self.constraints = {}
+        self.current_params = []
+
+    def init_ui(self):
+        # Создаем стек виджетов
+        self.stacked_widget = QStackedWidget()
+        
+        # Страницы
+        self.input_page = InputPage(self)
+        self.results_page = ResultsPage(self)
+        
+        self.stacked_widget.addWidget(self.input_page)
+        self.stacked_widget.addWidget(self.results_page)
+        
+        self.setCentralWidget(self.stacked_widget)
+
+    def show_results(self, analysis_type):
+        if self.current_static_data is not None and analysis_type == 'static':
+            # self.results_page.update_results()
+            self.stacked_widget.setCurrentIndex(1)
+        elif self.current_dynamic_data is not None and analysis_type == 'static':
+            # self.results_page.update_results()
+            self.stacked_widget.setCurrentIndex(1)
+    def show_input(self):
+        self.stacked_widget.setCurrentIndex(0)
