@@ -6,7 +6,9 @@ from PyQt5.QtCore import Qt
 from presentation.widgets.table_widget import TableWidget
 from presentation.widgets.plot_widget import PlotWidget
 from business.data_processor import DataProcessor
+from business.quality_calculator import QualityCalculator
 from data.data_manager import DataManager
+from data.database import PostgreSQLManager
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -28,8 +30,8 @@ class MainWindow(QMainWindow):
         self.header.setFont(QFont('Georgia', 16))
         self.header.setAlignment(Qt.AlignCenter)
         self.header.setStyleSheet("""
-            background-color: #581845;
-            color: #FEC4A7;
+            background-color: #666666;
+            color: #ffffff;
             padding: 15px;
             border-radius: 10px;
         """)
@@ -71,6 +73,7 @@ class MainWindow(QMainWindow):
         
         # Таблица и график
         self.static_table = TableWidget()
+        self.static_table.setMinimumWidth(800)
         self.static_plot = PlotWidget(analysis_type="static")
         
         layout.addLayout(btn_layout)
@@ -99,6 +102,7 @@ class MainWindow(QMainWindow):
         
         # Таблица и график
         self.dynamic_table = TableWidget()
+        self.dynamic_table.setMinimumWidth(800)
         self.dynamic_plot = PlotWidget(analysis_type="dynamic")
         
         layout.addLayout(btn_layout)
@@ -119,13 +123,17 @@ class MainWindow(QMainWindow):
         if file_path:
             try:
                 df = DataManager.load_data(file_path)
-                
+
+                # Автоматическое сохранение в PostgreSQL
+                db = PostgreSQLManager()
+                db.save_raw_data(df)
+
                 if analysis_type == "static":
                     self.current_static_data = df
-                    self.static_table.display_data(df)
+                    self.static_table.display_data(df, 50)
                 else:
                     self.current_dynamic_data = df
-                    self.dynamic_table.display_data(df)
+                    self.dynamic_table.display_data(df, 50)
                     
                 QMessageBox.information(self, "Успех", "Данные успешно загружены!")
                 
