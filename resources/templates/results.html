@@ -1,0 +1,13 @@
+<!-- templates/results.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Результаты анализа</title>
+</head>
+<body>
+    <h1>Результаты анализа качества</h1>
+    <img src="data:image/png;base64,{{ plot_url }}" alt="График">
+    <h2>Метрики:</h2>
+    {{ metrics|safe }}
+</body>
+</html>

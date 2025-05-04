@@ -1,0 +1,18 @@
+<!-- templates/index.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Анализ качества продукции</title>
+</head>
+<body>
+    <h1>Загрузка данных</h1>
+    <form method="POST" action="/upload" enctype="multipart/form-data">
+        <select name="analysis_type">
+            <option value="static">Статический анализ</option>
+            <option value="dynamic">Динамический анализ</option>
+        </select>
+        <input type="file" name="file">
+        <button type="submit">Загрузить</button>
+    </form>
+</body>
+</html>
