@@ -1,6 +1,7 @@
 # presentation/main_window.py
 from PyQt5.QtWidgets import (QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
-                             QPushButton, QFileDialog, QMessageBox, QLabel)
+                             QPushButton, QFileDialog, QMessageBox, QLabel, QGroupBox, QFormLayout, QComboBox, QLineEdit, 
+                            QGridLayout, QScrollArea, QCheckBox, QTableWidget,QTableWidgetItem)
 from PyQt5.QtGui import QIcon, QFont
 from PyQt5.QtCore import Qt
 from presentation.widgets.table_widget import TableWidget
@@ -23,6 +24,9 @@ class MainWindow(QMainWindow):
         # Данные текущей сессии
         self.current_static_data = None
         self.current_dynamic_data = None
+
+        self.constraints = {}
+        self.current_params = []
 
     def init_ui(self):
         # Заголовок
@@ -53,6 +57,9 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         central_widget.setLayout(layout)
         self.setCentralWidget(central_widget)
+        self.constraints_panel = self.create_constraints_panel()
+        layout.insertWidget(1, self.constraints_panel)  # Размещаем после заголовка
+
 
     def create_static_tab(self):
         widget = QWidget()
@@ -124,6 +131,11 @@ class MainWindow(QMainWindow):
             try:
                 df = DataManager.load_data(file_path)
 
+                # Обновление списка параметров
+                self.current_params = [col for col in df.columns if col not in ['id', 'timestamp']]
+                self.param_selector.clear()
+                self.param_selector.addItems(self.current_params)
+
                 # Автоматическое сохранение в PostgreSQL
                 db = PostgreSQLManager()
                 db.save_raw_data(df)
@@ -162,13 +174,15 @@ class MainWindow(QMainWindow):
         try:
             if analysis_type == "static" and self.current_static_data is not None:
                 result_df = QualityCalculator.calculate_quality_index(
-                    self.current_static_data, 
+                    self.current_static_data,
+                    constraints=self.constraints,
                     analysis_type="static"
                 )
                 self.static_plot.update_plot(result_df)
             elif analysis_type == "dynamic" and self.current_dynamic_data is not None:
                 result_df = QualityCalculator.calculate_quality_index(
-                    self.current_dynamic_data, 
+                    self.current_dynamic_data,
+                    constraints=self.constraints,
                     analysis_type="dynamic"
                 )
                 self.dynamic_plot.update_plot(result_df)
@@ -179,3 +193,195 @@ class MainWindow(QMainWindow):
             
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Ошибка расчета: {str(e)}")
+    
+    def create_constraints_panel(self):
+        scroll = QScrollArea()
+        group = QGroupBox("Управление ограничениями параметров")
+        layout = QGridLayout()
+
+        # Создание меток с уникальными идентификаторами
+        self.min_label = QLabel("Мин:")
+        self.max_label = QLabel("Макс:")
+        self.fixed_label = QLabel("Фикс:")
+
+        # Выбор параметра
+        self.param_selector = QComboBox()
+        self.param_selector.currentIndexChanged.connect(self.update_param_fields)
+        layout.addWidget(QLabel("Параметр:"), 0, 0)
+        layout.addWidget(self.param_selector, 0, 1)
+
+        # Тип ограничения
+        self.constraint_type = QComboBox()
+        self.constraint_type.addItems([
+            "Допустимый диапазон",
+            "Минимальное значение",
+            "Максимальное значение",
+            "Фиксированное значение"
+        ])
+        layout.addWidget(QLabel("Тип ограничения:"), 1, 0)
+        layout.addWidget(self.constraint_type, 1, 1)
+
+        # Поля ввода значений
+        self.min_input = QLineEdit()
+        self.max_input = QLineEdit()
+        self.fixed_input = QLineEdit()
+        
+        value_layout = QHBoxLayout()
+        value_layout.addWidget(self.min_label)
+        value_layout.addWidget(self.min_input)
+        value_layout.addWidget(self.max_label)
+        value_layout.addWidget(self.max_input)
+        value_layout.addWidget(self.fixed_label)
+        value_layout.addWidget(self.fixed_input)
+        layout.addLayout(value_layout, 2, 0, 1, 2)
+
+        # Кнопки управления
+        self.btn_add_constraint = QPushButton("Добавить ограничение")
+        self.btn_add_constraint.clicked.connect(self.add_constraint)
+        self.btn_clear_constraints = QPushButton("Очистить все")
+        self.btn_clear_constraints.clicked.connect(self.clear_constraints)
+        
+        layout.addWidget(self.btn_add_constraint, 3, 0)
+        layout.addWidget(self.btn_clear_constraints, 3, 1)
+
+        # Таблица активных ограничений
+        self.constraints_table = QTableWidget()
+        self.constraints_table.setColumnCount(3)
+        self.constraints_table.setHorizontalHeaderLabels(["Параметр", "Тип", "Значения"])
+        self.constraints_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        
+        layout.addWidget(self.constraints_table, 4, 0, 1, 2)
+
+        group.setLayout(layout)
+        scroll.setWidget(group)
+        scroll.setWidgetResizable(True)
+
+        # Инициализация видимости полей
+        self.min_input.setVisible(False)
+        self.max_input.setVisible(False)
+        self.fixed_input.setVisible(False)
+
+        # Инициализация видимости
+        self.min_label.setVisible(False)
+        self.max_label.setVisible(False)
+        self.fixed_label.setVisible(False)
+        
+        # Привязка обработчика изменения типа ограничения
+        self.constraint_type.currentIndexChanged.connect(self.update_input_visibility)
+        
+        # Первоначальное обновление
+        self.update_input_visibility()
+
+        
+
+        return scroll
+    
+    def update_input_visibility(self):
+        """Обновление видимости полей ввода в зависимости от типа ограничения"""
+        constraint_type = self.constraint_type.currentText()
+        
+        # Скрываем все поля
+        self.min_input.setVisible(False)
+        self.max_input.setVisible(False)
+        self.fixed_input.setVisible(False)
+        
+        # Очищаем неиспользуемые поля
+        self.min_input.clear()
+        self.max_input.clear()
+        self.fixed_input.clear()
+
+        # Показываем нужные поля
+        if constraint_type == "Допустимый диапазон":
+            self.min_input.setVisible(True)
+            self.max_input.setVisible(True)
+            self.min_input.setPlaceholderText("Минимальное значение")
+            self.max_input.setPlaceholderText("Максимальное значение")
+            
+        elif constraint_type == "Минимальное значение":
+            self.min_input.setVisible(True)
+            self.min_input.setPlaceholderText("Минимальное значение")
+            
+        elif constraint_type == "Максимальное значение":
+            self.max_input.setVisible(True)
+            self.max_input.setPlaceholderText("Максимальное значение")
+            
+        elif constraint_type == "Фиксированное значение":
+            self.fixed_input.setVisible(True)
+            self.fixed_input.setPlaceholderText("Фиксированное значение")
+
+        # Обновляем подписи
+        self.adjust_labels_visibility(constraint_type)
+    
+    def adjust_labels_visibility(self, constraint_type):
+        """Обновление видимости меток"""
+        # Сначала скрываем все метки
+        self.min_label.setVisible(False)
+        self.max_label.setVisible(False)
+        self.fixed_label.setVisible(False)
+
+        # Показываем нужные метки
+        if constraint_type == "Допустимый диапазон":
+            self.min_label.setVisible(True)
+            self.max_label.setVisible(True)
+        elif constraint_type == "Минимальное значение":
+            self.min_label.setVisible(True)
+        elif constraint_type == "Максимальное значение":
+            self.max_label.setVisible(True)
+        elif constraint_type == "Фиксированное значение":
+            self.fixed_label.setVisible(True)
+
+    def update_param_fields(self):
+        """Обновление доступных полей ввода в зависимости от типа ограничения"""
+        constraint_type = self.constraint_type.currentText()
+        
+        self.min_input.setVisible(constraint_type in ["Допустимый диапазон", "Минимальное значение"])
+        self.max_input.setVisible(constraint_type in ["Допустимый диапазон", "Максимальное значение"])
+        self.fixed_input.setVisible(constraint_type == "Фиксированное значение")
+
+    def add_constraint(self):
+        """Добавление нового ограничения"""
+        param = self.param_selector.currentText()
+        c_type = self.constraint_type.currentText()
+        
+        try:
+            if c_type == "Допустимый диапазон":
+                min_val = float(self.min_input.text())
+                max_val = float(self.max_input.text())
+                self.constraints[param] = {'type': 'range', 'min': min_val, 'max': max_val}
+                display_value = f"[{min_val} - {max_val}]"
+                
+            elif c_type == "Минимальное значение":
+                min_val = float(self.min_input.text())
+                self.constraints[param] = {'type': 'min', 'value': min_val}
+                display_value = f"≥ {min_val}"
+                
+            elif c_type == "Максимальное значение":
+                max_val = float(self.max_input.text())
+                self.constraints[param] = {'type': 'max', 'value': max_val}
+                display_value = f"≤ {max_val}"
+                
+            elif c_type == "Фиксированное значение":
+                fixed_val = float(self.fixed_input.text())
+                self.constraints[param] = {'type': 'fixed', 'value': fixed_val}
+                display_value = f"= {fixed_val}"
+                
+            self._update_constraints_table(param, c_type, display_value)
+            
+        except ValueError:
+            QMessageBox.warning(self, "Ошибка", "Некорректные значения ограничений")
+
+    def _update_constraints_table(self, param, c_type, values):
+        row = self.constraints_table.rowCount()
+        self.constraints_table.insertRow(row)
+        
+        self.constraints_table.setItem(row, 0, QTableWidgetItem(param))
+        self.constraints_table.setItem(row, 1, QTableWidgetItem(c_type))
+        self.constraints_table.setItem(row, 2, QTableWidgetItem(values))
+        
+        # Автоматическое выравнивание столбцов
+        self.constraints_table.resizeColumnsToContents()
+
+    def clear_constraints(self):
+        """Очистка всех ограничений"""
+        self.constraints.clear()
+        self.constraints_table.setRowCount(0)
