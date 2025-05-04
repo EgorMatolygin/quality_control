@@ -1,7 +1,7 @@
 # presentation/main_window.py
 from PyQt5.QtWidgets import (QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QFileDialog, QMessageBox, QLabel, QGroupBox, QFormLayout, QComboBox, QLineEdit, 
-                            QGridLayout, QScrollArea, QCheckBox, QTableWidget,QTableWidgetItem)
+                            QGridLayout, QScrollArea, QCheckBox, QTableWidget,QTableWidgetItem, QStackedWidget)
 from PyQt5.QtGui import QIcon, QFont
 from PyQt5.QtCore import Qt
 from presentation.widgets.table_widget import TableWidget
@@ -11,68 +11,57 @@ from business.quality_calculator import QualityCalculator
 from data.data_manager import DataManager
 from data.database import PostgreSQLManager
 
-class MainWindow(QMainWindow):
-    def __init__(self):
+class InputPage(QWidget):
+    def __init__(self, parent):
         super().__init__()
-        self.setWindowTitle("Анализ качества продукции")
-        self.setGeometry(600, 300, 1000, 800)
-        self.setWindowIcon(QIcon('resources/icon.png'))
-        
-        # Инициализация компонентов
+        self.parent = parent
         self.init_ui()
         
-        # Данные текущей сессии
-        self.current_static_data = None
-        self.current_dynamic_data = None
-
-        self.constraints = {}
-        self.current_params = []
-
     def init_ui(self):
+        layout = QVBoxLayout()
+        
         # Заголовок
-        self.header = QLabel("Система анализа качества продукции", self)
-        self.header.setFont(QFont('Georgia', 16))
-        self.header.setAlignment(Qt.AlignCenter)
-        self.header.setStyleSheet("""
+        header = QLabel("Ввод данных и ограничений")
+        header.setFont(QFont('Georgia', 16))
+        header.setAlignment(Qt.AlignCenter)
+        header.setStyleSheet("""
             background-color: #666666;
             color: #ffffff;
             padding: 15px;
             border-radius: 10px;
         """)
         
-        # Вкладки
-        self.tabs = QTabWidget()
-        self.static_tab = self.create_static_tab()
-        self.dynamic_tab = self.create_dynamic_tab()
+        # Селектор типа анализа
+        self.analysis_type = QComboBox()
+        self.analysis_type.addItems(["Статический анализ", "Динамический анализ"])
+        self.analysis_type.currentIndexChanged.connect(self.switch_analysis_type)
         
-        self.tabs.addTab(self.static_tab, "Статический анализ")
-        self.tabs.addTab(self.dynamic_tab, "Динамический анализ")
+        # Контейнеры для разных типов анализа
+        self.static_widget = self.create_static_widget()
+        self.dynamic_widget = self.create_dynamic_widget()
+        self.dynamic_widget.setVisible(False)
         
-        # Основной лейаут
-        layout = QVBoxLayout()
-        layout.addWidget(self.header)
-        layout.addWidget(self.tabs)
+        layout.addWidget(header)
+        layout.addWidget(self.analysis_type)
+        layout.addWidget(self.static_widget)
+        layout.addWidget(self.dynamic_widget)
         
-        # Центральный виджет
-        central_widget = QWidget()
-        central_widget.setLayout(layout)
-        self.setCentralWidget(central_widget)
-        self.constraints_panel = self.create_constraints_panel()
-        layout.insertWidget(1, self.constraints_panel)  # Размещаем после заголовка
-
-
-    def create_static_tab(self):
+        self.setLayout(layout)
+    
+    def switch_analysis_type(self):
+        index = self.analysis_type.currentIndex()
+        self.static_widget.setVisible(index == 0)
+        self.dynamic_widget.setVisible(index == 1)
+    
+    def create_static_widget(self):
         widget = QWidget()
         layout = QVBoxLayout()
         
-        # Кнопки
+        # Кнопки статического анализа
         btn_layout = QHBoxLayout()
-        self.btn_load_static = QPushButton("Загрузить CSV/Excel")
-        self.btn_load_static.clicked.connect(lambda: self.load_data("static"))
-        self.btn_process_static = QPushButton("Обработать данные")
-        self.btn_process_static.clicked.connect(lambda: self.process_data("static"))
+        self.btn_load_static = QPushButton("Загрузить данные")
+        self.btn_process_static = QPushButton("Обработать")
         self.btn_calculate_static = QPushButton("Рассчитать индекс")
-        self.btn_calculate_static.clicked.connect(lambda: self.calculate_index("static"))
         
         btn_layout.addWidget(self.btn_load_static)
         btn_layout.addWidget(self.btn_process_static)
@@ -80,8 +69,7 @@ class MainWindow(QMainWindow):
         
         # Таблица и график
         self.static_table = TableWidget()
-        self.static_table.setMinimumWidth(800)
-        self.static_plot = PlotWidget(analysis_type="static")
+        self.static_plot = PlotWidget("static")
         
         layout.addLayout(btn_layout)
         layout.addWidget(self.static_table)
@@ -89,19 +77,16 @@ class MainWindow(QMainWindow):
         
         widget.setLayout(layout)
         return widget
-
-    def create_dynamic_tab(self):
+    
+    def create_dynamic_widget(self):
         widget = QWidget()
         layout = QVBoxLayout()
         
-        # Кнопки
+        # Кнопки динамического анализа
         btn_layout = QHBoxLayout()
-        self.btn_load_dynamic = QPushButton("Загрузить CSV/Excel")
-        self.btn_load_dynamic.clicked.connect(lambda: self.load_data("dynamic"))
-        self.btn_process_dynamic = QPushButton("Обработать данные")
-        self.btn_process_dynamic.clicked.connect(lambda: self.process_data("dynamic"))
+        self.btn_load_dynamic = QPushButton("Загрузить данные")
+        self.btn_process_dynamic = QPushButton("Обработать")
         self.btn_calculate_dynamic = QPushButton("Рассчитать индекс")
-        self.btn_calculate_dynamic.clicked.connect(lambda: self.calculate_index("dynamic"))
         
         btn_layout.addWidget(self.btn_load_dynamic)
         btn_layout.addWidget(self.btn_process_dynamic)
@@ -109,8 +94,7 @@ class MainWindow(QMainWindow):
         
         # Таблица и график
         self.dynamic_table = TableWidget()
-        self.dynamic_table.setMinimumWidth(800)
-        self.dynamic_plot = PlotWidget(analysis_type="dynamic")
+        self.dynamic_plot = PlotWidget("dynamic")
         
         layout.addLayout(btn_layout)
         layout.addWidget(self.dynamic_table)
@@ -119,38 +103,30 @@ class MainWindow(QMainWindow):
         widget.setLayout(layout)
         return widget
 
-    def load_data(self, analysis_type):
+    def load_data(self):
         file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Выберите файл данных",
-            "",
-            "Data Files (*.csv *.xlsx)"
-        )
+            self, "Выберите файл данных", "", "Data Files (*.csv *.xlsx)")
         
         if file_path:
             try:
-                df = DataManager.load_data(file_path)
-
-                # Обновление списка параметров
-                self.current_params = [col for col in df.columns if col not in ['id', 'timestamp']]
-                self.param_selector.clear()
-                self.param_selector.addItems(self.current_params)
-
-                # Автоматическое сохранение в PostgreSQL
-                db = PostgreSQLManager()
-                db.save_raw_data(df)
-
-                if analysis_type == "static":
-                    self.current_static_data = df
-                    self.static_table.display_data(df, 50)
-                else:
-                    self.current_dynamic_data = df
-                    self.dynamic_table.display_data(df, 50)
-                    
+                self.parent.df = DataManager.load_data(file_path)
+                self.parent.db = PostgreSQLManager()
+                self.parent.db.save_raw_data(self.parent.df)
+                
+                self.show_preview(self.parent.df)
+                self.btn_next.setEnabled(True)
                 QMessageBox.information(self, "Успех", "Данные успешно загружены!")
                 
             except Exception as e:
                 QMessageBox.critical(self, "Ошибка", f"Ошибка загрузки: {str(e)}")
+
+    def show_preview(self, df, max_rows=10):
+        widget = QWidget()
+        layout = QVBoxLayout()
+        
+        # Таблица
+        self.static_table = TableWidget()
+        self.static_table.setMinimumWidth(800)
 
     def process_data(self, analysis_type):
         try:
@@ -385,3 +361,129 @@ class MainWindow(QMainWindow):
         """Очистка всех ограничений"""
         self.constraints.clear()
         self.constraints_table.setRowCount(0)
+
+class ResultsPage(QWidget):
+    def __init__(self, parent):
+        super().__init__()
+        self.parent = parent
+        self.init_ui()
+        
+    def init_ui(self):
+        layout = QVBoxLayout()
+        
+        # Заголовок
+        header = QLabel("Результаты анализа")
+        header.setFont(QFont('Georgia', 16))
+        header.setAlignment(Qt.AlignCenter)
+        header.setStyleSheet("""
+            background-color: #666666;
+            color: #ffffff;
+            padding: 15px;
+            border-radius: 10px;
+        """)
+        
+        # Вкладки анализа
+        self.tabs = QTabWidget()
+        self.static_tab = self.create_static_tab()
+        self.dynamic_tab = self.create_dynamic_tab()
+        self.tabs.addTab(self.static_tab, "Статический анализ")
+        self.tabs.addTab(self.dynamic_tab, "Динамический анализ")
+        
+        # Кнопка возврата
+        self.btn_back = QPushButton("← Назад к вводу")
+        self.btn_back.clicked.connect(self.parent.show_input)
+        
+        layout.addWidget(header)
+        layout.addWidget(self.tabs)
+        layout.addWidget(self.btn_back)
+        
+        self.setLayout(layout)
+    
+    def create_static_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout()
+        
+        # Таблица
+        self.static_table = TableWidget()
+        self.static_table.setMinimumWidth(800)
+        
+        # График
+        self.static_plot = PlotWidget(analysis_type="static")
+        
+        layout.addWidget(self.static_table)
+        layout.addWidget(self.static_plot)
+        widget.setLayout(layout)
+        return widget
+    
+    def create_dynamic_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout()
+        
+        # Таблица
+        self.dynamic_table = TableWidget()
+        self.dynamic_table.setMinimumWidth(800)
+        
+        # График
+        self.dynamic_plot = PlotWidget(analysis_type="dynamic")
+        
+        layout.addWidget(self.dynamic_table)
+        layout.addWidget(self.dynamic_plot)
+        widget.setLayout(layout)
+        return widget
+    
+    def update_results(self):
+        try:
+            # Обработка данных
+            static_df = DataProcessor.preprocess_data(self.parent.df)
+            dynamic_df = DataProcessor.preprocess_data(self.parent.df)
+            
+            # Расчет индексов
+            static_results = QualityCalculator.calculate_quality_index(
+                static_df, self.parent.constraints, "static")
+            dynamic_results = QualityCalculator.calculate_quality_index(
+                dynamic_df, self.parent.constraints, "dynamic")
+            
+            # Обновление интерфейса
+            self.static_table.display_data(static_results)
+            self.dynamic_table.display_data(dynamic_results)
+            self.static_plot.update_plot(static_results)
+            self.dynamic_plot.update_plot(dynamic_results)
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка анализа: {str(e)}")
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Анализ качества продукции")
+        self.setGeometry(600, 300, 1000, 800)
+        self.setWindowIcon(QIcon('resources/icon.png'))
+        
+        # Инициализация данных
+        self.df = None
+        self.constraints = {}
+        self.db = None
+        
+        # Инициализация интерфейса
+        self.init_ui()
+    
+    def init_ui(self):
+        # Создаем стек виджетов
+        self.stacked_widget = QStackedWidget()
+        
+        # Страницы
+        self.input_page = InputPage(self)
+        self.results_page = ResultsPage(self)
+        
+        self.stacked_widget.addWidget(self.input_page)
+        self.stacked_widget.addWidget(self.results_page)
+        
+        self.setCentralWidget(self.stacked_widget)
+    
+    def show_results(self):
+        if self.df is not None:
+            self.results_page.update_results()
+            self.stacked_widget.setCurrentIndex(1)
+    
+    def show_input(self):
+        self.stacked_widget.setCurrentIndex(0)
