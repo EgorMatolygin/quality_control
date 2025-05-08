@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (QScrollArea, QGroupBox, QGridLayout, QComboBox, QLineEdit,
                              QTableWidget, QTableWidgetItem, QPushButton, QLabel, QHBoxLayout,
-                             QMessageBox)
+                             QMessageBox, QHeaderView)
 from PyQt5.QtCore import Qt
 
 class ConstraintsPanel(QScrollArea):
@@ -61,9 +61,28 @@ class ConstraintsPanel(QScrollArea):
 
         # Таблица активных ограничений
         self.constraints_table = QTableWidget()
+
+        self.constraints_table.setEditTriggers(QTableWidget.NoEditTriggers)  # Блокировка редактирования
+        self.constraints_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)  # Авто-ширина
+        self.constraints_table.horizontalHeader().setStretchLastSection(True)  # Растягивание последнего столбца
+        self.constraints_table.verticalHeader().setVisible(False)  # Скрыть вертикальные заголовки
+        self.constraints_table.setAlternatingRowColors(True)  # Чередование цветов строк
+        self.constraints_table.setStyleSheet("""
+            QTableWidget {
+                font: 10pt "Segoe UI";
+                gridline-color: #E0E0E0;
+            }
+            QHeaderView::section {
+                background-color: #F5F5F5;
+                color: #000000;
+                padding: 4px;
+            }
+        """)
         self.constraints_table.setColumnCount(3)
+        # Оптимизация ширины столбцов
+        self.constraints_table.resizeColumnsToContents()
+        self.constraints_table.horizontalHeader().setMinimumSectionSize(100)  # Минимальная ширина
         self.constraints_table.setHorizontalHeaderLabels(["Параметр", "Тип", "Значения"])
-        self.constraints_table.setEditTriggers(QTableWidget.NoEditTriggers)
         layout.addWidget(self.constraints_table, 4, 0, 1, 2)
 
         # Начальное состояние
@@ -174,7 +193,7 @@ class ConstraintsPanel(QScrollArea):
         self.constraints_table.setItem(row, 2, QTableWidgetItem(values))
         
         # Автоматическое выравнивание столбцов
-        self.constraints_table.resizeColumnsToContents()
+        # self.constraints_table.resizeColumnsToContents()
 
     def clear_constraints(self):
         """Очистка всех ограничений для текущего типа анализа"""

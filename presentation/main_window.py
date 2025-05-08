@@ -1,7 +1,7 @@
 # presentation/main_window.py
 from PyQt5.QtWidgets import (QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QFileDialog, QMessageBox, QLabel, QGroupBox, QFormLayout, QComboBox, QLineEdit, 
-                            QGridLayout, QScrollArea, QCheckBox, QTableWidget,QTableWidgetItem, QStackedWidget)
+                            QGridLayout, QScrollArea, QCheckBox, QTableWidget,QTableWidgetItem, QStackedWidget, QHeaderView)
 from PyQt5.QtGui import QIcon, QFont
 from PyQt5.QtCore import Qt
 from presentation.widgets.table_widget import TableWidget
@@ -228,173 +228,211 @@ class ResultsPage(QWidget):
         self.parent = parent
         self.current_param = None
         self.init_ui()
+        
+        # Кэш для хранения расчетных статистик
+        self.stats_cache = {}
 
     def init_ui(self):
-        layout = QVBoxLayout()
+        main_layout = QVBoxLayout()
         
-        # Заголовок
-        self.header = QLabel("Результаты анализа", self)
-        self.header.setFont(QFont('Georgia', 16))
+        # Заголовок с фиксированным размером
+        self.header = QLabel("Результаты статического анализа", self)
+        self.header.setFont(QFont('Arial', 18, QFont.Bold))
         self.header.setAlignment(Qt.AlignCenter)
         self.header.setStyleSheet("""
-            background-color: #666666;
-            color: #ffffff;
+            background-color: #4A90E2;
+            color: white;
             padding: 15px;
-            border-radius: 10px;
+            border-radius: 8px;
+            margin: 10px 0;
         """)
-        layout.addWidget(self.header)
+        main_layout.addWidget(self.header)
 
-        # Панель выбора параметра
-        self.param_panel = QWidget()
-        param_layout = QHBoxLayout()
-        param_layout.addWidget(QLabel("Выберите параметр:"))
+        # Панель управления с фиксированной высотой
+        control_panel = QWidget()
+        control_layout = QHBoxLayout()
+        
+        self.param_label = QLabel("Выберите параметр:")
+        self.param_label.setFont(QFont('Arial', 12))
+        
         self.param_selector = QComboBox()
+        self.param_selector.setFont(QFont('Arial', 12))
+        self.param_selector.setMinimumWidth(300)
         self.param_selector.currentIndexChanged.connect(self.update_plots)
-        param_layout.addWidget(self.param_selector)
-        self.param_panel.setLayout(param_layout)
-        layout.addWidget(self.param_panel)
+        
+        control_layout.addWidget(self.param_label)
+        control_layout.addWidget(self.param_selector)
+        control_panel.setLayout(control_layout)
+        main_layout.addWidget(control_panel)
 
-        # Контейнер графиков
+        # Основная область с графиком и статистикой
+        content_widget = QWidget()
+        content_layout = QHBoxLayout()
+        
+        # Контейнер для графика (70% ширины)
         self.plot_container = QWebEngineView()
-        layout.addWidget(self.plot_container)
+        self.plot_container.setMinimumSize(800, 500)
+        content_layout.addWidget(self.plot_container, 70)
+
+        # Панель статистики (30% ширины)
+        stats_panel = QWidget()
+        stats_layout = QVBoxLayout()
+        
+        self.stats_table = QTableWidget()
+        self.stats_table.setColumnCount(2)
+        self.stats_table.setHorizontalHeaderLabels(["Метрика", "Значение"])
+        self.stats_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.stats_table.verticalHeader().setVisible(False)
+        
+        stats_layout.addWidget(QLabel("Статистические показатели:"))
+        stats_layout.addWidget(self.stats_table)
+        stats_panel.setLayout(stats_layout)
+        content_layout.addWidget(stats_panel, 30)
+
+        content_widget.setLayout(content_layout)
+        main_layout.addWidget(content_widget)
 
         # Кнопка возврата
         self.btn_back = QPushButton("← Назад к вводу")
+        self.btn_back.setStyleSheet("""
+            QPushButton {
+                background-color: #FF6B6B;
+                color: white;
+                padding: 10px 20px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QPushButton:hover { background-color: #FF5252; }
+        """)
         self.btn_back.clicked.connect(self.parent.show_input)
-        layout.addWidget(self.btn_back)
-        
-        self.setLayout(layout)
+        main_layout.addWidget(self.btn_back, alignment=Qt.AlignRight)
+
+        self.setLayout(main_layout)
 
     def update_params_list(self, analysis_type):
-        """Обновление списка параметров при загрузке данных"""
+        """Обновляет список параметров на странице результатов"""
         if analysis_type == 'static':
-            params = self.parent.current_static_data.columns.tolist()
+            data = self.parent.current_static_data
         else:
-            params = self.parent.current_dynamic_data.columns.tolist()
-        
-        self.param_selector.clear()
-        self.param_selector.addItems(params)
-        if params:
-            self.current_param = params[0]
+            data = self.parent.current_dynamic_data
+
+        if data is not None:
+            params = [col for col in data.columns if col not in ['id', 'timestamp']]
+            self.param_selector.clear()
+            self.param_selector.addItems(params)
+            if params:
+                self.current_param = params[0]
+        else:
+            self.param_selector.clear()
 
     def update_plots(self, index):
-        """Обновление графиков при выборе параметра"""
         param = self.param_selector.currentText()
-        if not param:
+        if (not param or 
+            self.parent.current_static_data is None or 
+            self.parent.current_static_data.empty):
             return
         
-        analysis_type = 'static' if self.parent.current_static_data is not None else 'dynamic'
-        self.current_param = param
-        
-        # Создание объединенного графика
-        fig = make_subplots(rows=1, cols=2, subplot_titles=(
-            "Статический анализ", 
-            "Динамический анализ"
-        ))
-
-        # Статический график
-        if self.parent.current_static_data is not None:
-            self._add_static_plot(fig, param, row=1, col=1)
-
-        # Динамический график
-        if self.parent.current_dynamic_data is not None:
-            self._add_dynamic_plot(fig, param, row=1, col=2)
-
-        fig.update_layout(height=600, showlegend=False)
-        self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
-
-    def _add_static_plot(self, fig, param, row, col):
-        """Добавление статического графика с ограничениями"""
         df = self.parent.current_static_data
         constraints = self.parent.static_constraints.get(param, {})
+        
+        # Создаем комбинированный график
+        fig = make_subplots(rows=2, cols=2,
+                          subplot_titles=[
+                              f"Распределение {param}",
+                              f"Box-plot {param}",
+                              f"Сравнение партий",
+                              f"Корреляция с толщиной"
+                          ],
+                          specs=[[{"type": "xy"}, {"type": "xy"}],
+                                 [{"type": "xy"}, {"type": "xy"}]])
+        
+        # Гистограмма с ограничениями
+        self._add_histogram(fig, df, param, constraints, row=1, col=1)
+        
+        # Box-plot
+        self._add_boxplot(fig, df, param, row=1, col=2)
+        
+        # Сравнение партий
+        self._add_batch_comparison(fig, df, param, row=2, col=1)
+        
+        # Диаграмма рассеивания
+        self._add_scatterplot(fig, df, param, row=2, col=2)
+        
+        # Обновление статистик
+        self._update_stats_table(df, param, constraints)
+        
+        fig.update_layout(height=1000, showlegend=False)
+        self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
 
-        # Гистограмма
+    def _add_histogram(self, fig, df, param, constraints, row, col):
+        # Добавление гистограммы
         fig.add_trace(go.Histogram(
             x=df[param],
             name=param,
-            marker_color='#636efa'
+            marker_color='#636efa',
+            opacity=0.7
         ), row=row, col=col)
-
-        # Линии ограничений
-        if constraints:
-            line_style = dict(
-                line=dict(color='red', dash='dash', width=2),
-                opacity=0.7
-            )
-            
-            if constraints['type'] == 'range':
-                fig.add_vline(x=constraints['min'], **line_style, row=row, col=col)
-                fig.add_vline(x=constraints['max'], **line_style, row=row, col=col)
-                fig.add_annotation(
-                    x=constraints['min'], y=0.9, yref="paper",
-                    text=f"MIN: {constraints['min']}", showarrow=False,
-                    row=row, col=col
-                )
-                fig.add_annotation(
-                    x=constraints['max'], y=0.9, yref="paper",
-                    text=f"MAX: {constraints['max']}", showarrow=False,
-                    row=row, col=col
-                )
-            else:
-                value = constraints.get('value')
-                fig.add_vline(x=value, **line_style, row=row, col=col)
-                fig.add_annotation(
-                    x=value, y=0.9, yref="paper",
-                    text=f"{constraints['type'].upper()}: {value}",
-                    showarrow=False, row=row, col=col
-                )
-
-        fig.update_xaxes(title_text=param, row=row, col=col)
-        fig.update_yaxes(title_text="Частота", row=row, col=col)
-
-    def _add_dynamic_plot(self, fig, param, row, col):
-        """Добавление динамического графика с ограничениями"""
-        df = self.parent.current_dynamic_data
-        constraints = self.parent.dynamic_constraints.get(param, {})
         
-        if 'timestamp' not in df.columns:
-            return
+        # Линии ограничений
+        if constraints.get('type') == 'range':
+            fig.add_vline(
+                x=constraints['min'], 
+                line=dict(color='red', dash='dash', width=2),
+                row=row, col=col
+            )
+            fig.add_vline(
+                x=constraints['max'], 
+                line=dict(color='red', dash='dash', width=2),
+                row=row, col=col
+            )
 
-        # Временной ряд
-        fig.add_trace(go.Scatter(
-            x=df['timestamp'],
+    def _add_boxplot(self, fig, df, param, row, col):
+        # Box-plot
+        fig.add_trace(go.Box(
             y=df[param],
-            mode='lines+markers',
-            line=dict(color='#00cc96'),
-            name=param
+            name=param,
+            boxpoints='outliers',
+            marker_color='#00cc96'
         ), row=row, col=col)
 
-        # Линии ограничений
-        if constraints:
-            line_style = dict(
-                line=dict(color='red', dash='dash', width=2),
-                opacity=0.7
-            )
-            
-            if constraints['type'] == 'range':
-                fig.add_hline(y=constraints['min'], **line_style, row=row, col=col)
-                fig.add_hline(y=constraints['max'], **line_style, row=row, col=col)
-                fig.add_annotation(
-                    y=constraints['min'], x=0.1, xref="paper",
-                    text=f"MIN: {constraints['min']}", showarrow=False,
-                    row=row, col=col
-                )
-                fig.add_annotation(
-                    y=constraints['max'], x=0.1, xref="paper",
-                    text=f"MAX: {constraints['max']}", showarrow=False,
-                    row=row, col=col
-                )
-            else:
-                value = constraints.get('value')
-                fig.add_hline(y=value, **line_style, row=row, col=col)
-                fig.add_annotation(
-                    y=value, x=0.1, xref="paper",
-                    text=f"{constraints['type'].upper()}: {value}",
-                    showarrow=False, row=row, col=col
-                )
+    def _add_batch_comparison(self, fig, df, param, row, col):
+        # Сравнение по партиям
+        batches = df['batch_id'].unique()[:3]  # Первые 3 партии
+        for batch in batches:
+            fig.add_trace(go.Box(
+                y=df[df['batch_id'] == batch][param],
+                name=batch,
+                boxpoints='outliers'
+            ), row=row, col=col)
 
-        fig.update_xaxes(title_text="Время", row=row, col=col)
-        fig.update_yaxes(title_text=param, row=row, col=col)
+    def _add_scatterplot(self, fig, df, param, row, col):
+        # Диаграмма рассеивания с толщиной
+        if 'thickness' in df.columns:
+            fig.add_trace(go.Scatter(
+                x=df['thickness'],
+                y=df[param],
+                mode='markers',
+                marker=dict(color='#ffa600', size=8)
+            ), row=row, col=col)
+
+    def _update_stats_table(self, df, param, constraints):
+        stats = {
+            'Среднее': df[param].mean(),
+            'Медиана': df[param].median(),
+            'Ст. отклонение': df[param].std(),
+            'Минимум': df[param].min(),
+            'Максимум': df[param].max(),
+            'Количество': df[param].count()
+        }
+        
+        if constraints.get('type') == 'range':
+            stats['Допустимый минимум'] = constraints['min']
+            stats['Допустимый максимум'] = constraints['max']
+        
+        self.stats_table.setRowCount(len(stats))
+        for i, (key, value) in enumerate(stats.items()):
+            self.stats_table.setItem(i, 0, QTableWidgetItem(str(key)))
+            self.stats_table.setItem(i, 1, QTableWidgetItem(f"{value:.2f}"))
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -416,6 +454,8 @@ class MainWindow(QMainWindow):
         self.constraints = {}
         self.current_params = []
 
+        self.results_page = ResultsPage(self)
+
     def init_ui(self):
         # Создаем стек виджетов
         self.stacked_widget = QStackedWidget()
@@ -430,16 +470,36 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.stacked_widget)
 
     def show_results(self, analysis_type):
-        if (analysis_type == 'static' and self.current_static_data is not None) or \
-        (analysis_type == 'dynamic' and self.current_dynamic_data is not None):
-            
-            try:
-                self.results_page.update_params_list(analysis_type)
-                self.results_page.update_plots(0)
-                self.stacked_widget.setCurrentIndex(1)
-            except Exception as e:
-                QMessageBox.critical(self, "Ошибка", f"Ошибка визуализации: {str(e)}")
-                self.stacked_widget.setCurrentIndex(0)
+        try:
+            # Определение данных по типу анализа
+            data = None
+            if analysis_type == 'static':
+                data = self.current_static_data
+            elif analysis_type == 'dynamic':
+                data = self.current_dynamic_data
+            else:
+                QMessageBox.warning(self, "Ошибка", "Неизвестный тип анализа")
+                return
+
+            # Проверка наличия данных
+            if data is None or data.empty:
+                QMessageBox.warning(self, "Ошибка", "Данные не загружены. Сначала загрузите данные.")
+                return
+
+            # Обновление интерфейса результатов
+            self.results_page.update_params_list(analysis_type)  # Обновляем список параметров
+            self.results_page.update_plots(0)  # Строим графики для первого параметра
+
+            # Переключение на страницу результатов
+            self.stacked_widget.setCurrentIndex(1)
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Критическая ошибка",
+                f"Ошибка при отображении результатов:\n{str(e)}"
+            )
+            self.stacked_widget.setCurrentIndex(0)
 
     def show_input(self):
         self.stacked_widget.setCurrentIndex(0)
