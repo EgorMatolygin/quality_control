@@ -11,6 +11,10 @@ from business.quality_calculator import QualityCalculator
 from data.data_manager import DataManager
 from data.database import PostgreSQLManager
 
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from PyQt5.QtWebEngineWidgets import QWebEngineView
+
 class InputPage(QWidget):
     def __init__(self, parent):
         super().__init__()
@@ -41,9 +45,6 @@ class InputPage(QWidget):
         layout = QVBoxLayout()
         layout.addWidget(self.header)
         layout.addWidget(self.tabs)
-        
-        self.constraints_panel = self.create_constraints_panel()
-        layout.insertWidget(1, self.constraints_panel)  # Размещаем после заголовка
 
         self.setLayout(layout)
         
@@ -67,6 +68,8 @@ class InputPage(QWidget):
         btn_layout.addWidget(self.btn_load_static)
         btn_layout.addWidget(self.btn_process_static)
         btn_layout.addWidget(self.btn_calculate_static)
+
+        self.static_constraints_panel = self.create_constraints_panel()
         
         # Таблица и график
         self.static_table = TableWidget()
@@ -74,6 +77,7 @@ class InputPage(QWidget):
         
         layout.addLayout(btn_layout)
         layout.addWidget(self.static_table)
+        layout.addWidget(self.static_constraints_panel)
         layout.addWidget(self.btn_next_static)
         
         widget.setLayout(layout)
@@ -99,6 +103,7 @@ class InputPage(QWidget):
         btn_layout.addWidget(self.btn_process_dynamic)
         btn_layout.addWidget(self.btn_calculate_dynamic)
 
+        self.dynamic_constraints_panel = self.create_constraints_panel()
         
         # Таблица и график
         self.dynamic_table = TableWidget()
@@ -106,6 +111,7 @@ class InputPage(QWidget):
 
         layout.addLayout(btn_layout)
         layout.addWidget(self.dynamic_table)
+        layout.addWidget(self.dynamic_constraints_panel)
         layout.addWidget(self.btn_next_dynamic)
         
         widget.setLayout(layout)
@@ -129,8 +135,12 @@ class InputPage(QWidget):
                 self.param_selector.addItems(self.current_params)
 
                 # Автоматическое сохранение в PostgreSQL
-                db = PostgreSQLManager()
-                db.save_raw_data(df)
+                try:
+                    db = PostgreSQLManager()
+                    db.save_raw_data(df)
+                    db = None  # Закрываем соединение через деструктор
+                except Exception as e:
+                    QMessageBox.critical(self, "Ошибка", f"Ошибка подключения к базе данных: {str(e)}")
 
                 if analysis_type == "static":
                     self.parent.current_static_data = df
@@ -264,8 +274,6 @@ class InputPage(QWidget):
         # Первоначальное обновление
         self.update_input_visibility()
 
-        
-
         return scroll
     
     def update_input_visibility(self):
@@ -385,8 +393,10 @@ class ResultsPage(QWidget):
         self.init_ui()
 
     def init_ui(self):
+        layout = QVBoxLayout()
+        
         # Заголовок
-        self.header = QLabel("Результат", self)
+        self.header = QLabel("Результаты анализа", self)
         self.header.setFont(QFont('Georgia', 16))
         self.header.setAlignment(Qt.AlignCenter)
         self.header.setStyleSheet("""
@@ -395,6 +405,93 @@ class ResultsPage(QWidget):
             padding: 15px;
             border-radius: 10px;
         """)
+
+        # Контейнер для графиков
+        self.tabs = QTabWidget()
+        self.plot_container_static = QWebEngineView()
+        self.plot_container_dynamic = QWebEngineView()
+        
+        self.tabs.addTab(self.plot_container_static, "Статические показатели")
+        self.tabs.addTab(self.plot_container_dynamic, "Динамические показатели")
+
+        # Кнопка возврата
+        self.btn_back = QPushButton("← Назад к вводу")
+        self.btn_back.clicked.connect(self.parent.show_input)
+
+        layout.addWidget(self.header)
+        layout.addWidget(self.tabs)
+        layout.addWidget(self.btn_back)
+        
+        self.setLayout(layout)
+
+    def update_plots(self, analysis_type):
+        if analysis_type == 'static':
+            self._create_static_plots()
+        else:
+            self._create_dynamic_plots()
+
+    def _create_static_plots(self):
+        # Пример статических графиков
+        df = self.parent.current_static_data
+        
+        # График 1: Распределение параметров
+        fig1 = make_subplots(rows=1, cols=2)
+        
+        for i, col in enumerate(df.columns[:2]):
+            fig1.add_trace(
+                go.Histogram(x=df[col], name=col),
+                row=1, col=i+1
+            )
+        fig1.update_layout(title_text="Распределение параметров")
+        
+        # График 2: Box plot
+        fig2 = go.Figure()
+        for col in df.columns[:3]:
+            fig2.add_trace(go.Box(y=df[col], name=col))
+        fig2.update_layout(title_text="Сравнение параметров")
+
+        # Создаем отдельные виджеты для каждого графика
+        hist_view = QWebEngineView()
+        hist_view.setHtml(fig1.to_html(include_plotlyjs='cdn'))
+        
+        box_view = QWebEngineView()
+        box_view.setHtml(fig2.to_html(include_plotlyjs='cdn'))
+
+        # Добавляем вкладки
+        self.tabs.addTab(hist_view, "Распределение")
+        self.tabs.addTab(box_view, "Box plot")
+
+    def _create_dynamic_plots(self):
+        # Пример динамических графиков
+        df = self.parent.current_dynamic_data
+        
+        # Линейный график
+        fig = go.Figure()
+        if 'timestamp' in df.columns:
+            df = df.sort_values('timestamp')
+            for col in df.columns[1:3]:
+                fig.add_trace(go.Scatter(
+                    x=df['timestamp'], 
+                    y=df[col],
+                    mode='lines+markers',
+                    name=col
+                ))
+        fig.update_layout(
+            title="Динамика показателей",
+            xaxis_title="Время",
+            yaxis_title="Значение"
+        )
+        
+        self._show_plot(fig, self.plot_container_dynamic)
+
+    def _show_plot(self, figure, container):
+        # Сохраняем график во временный HTML
+        html = '<html><body>'
+        html += figure.to_html(include_plotlyjs='cdn')
+        html += '</body></html>'
+        
+        # Отображаем в WebEngineView
+        container.setHtml(html)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -427,11 +524,15 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.stacked_widget)
 
     def show_results(self, analysis_type):
-        if self.current_static_data is not None and analysis_type == 'static':
-            # self.results_page.update_results()
-            self.stacked_widget.setCurrentIndex(1)
-        elif self.current_dynamic_data is not None and analysis_type == 'static':
-            # self.results_page.update_results()
-            self.stacked_widget.setCurrentIndex(1)
+        if (analysis_type == 'static' and self.current_static_data is not None) or \
+        (analysis_type == 'dynamic' and self.current_dynamic_data is not None):
+            
+            try:
+                self.results_page.update_plots(analysis_type)
+                self.stacked_widget.setCurrentIndex(1)
+            except Exception as e:
+                QMessageBox.critical(self, "Ошибка", f"Ошибка визуализации: {str(e)}")
+                self.stacked_widget.setCurrentIndex(0)
+
     def show_input(self):
         self.stacked_widget.setCurrentIndex(0)
