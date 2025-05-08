@@ -164,22 +164,12 @@ class InputPage(QWidget):
             try:
                 db = PostgreSQLManager()
                 db.save_raw_data(df, analysis_type)
-                self._log_action(f"Data saved to DB: {analysis_type}")
             except Exception as e:
                 QMessageBox.warning(self, "Database Warning", 
                                 f"Ошибка сохранения в базу данных: {str(e)}")
             finally:
                 if db:
                     db.close()
-
-            # Визуальная обратная связь
-            QMessageBox.information(
-                self,
-                "Данные загружены",
-                f"Успешно загружено {len(df)} записей\n"
-                f"Обнаружено параметров: {len(params)}\n"
-                f"Тип анализа: {analysis_type}"
-            )
 
         except Exception as e:
             QMessageBox.critical(
