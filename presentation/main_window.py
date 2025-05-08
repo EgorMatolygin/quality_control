@@ -226,6 +226,7 @@ class ResultsPage(QWidget):
     def __init__(self, parent):
         super().__init__()
         self.parent = parent
+        self.current_param = None
         self.init_ui()
 
     def init_ui(self):
@@ -241,93 +242,159 @@ class ResultsPage(QWidget):
             padding: 15px;
             border-radius: 10px;
         """)
+        layout.addWidget(self.header)
 
-        # Контейнер для графиков
-        self.tabs = QTabWidget()
-        self.plot_container_static = QWebEngineView()
-        self.plot_container_dynamic = QWebEngineView()
-        
-        self.tabs.addTab(self.plot_container_static, "Статические показатели")
-        self.tabs.addTab(self.plot_container_dynamic, "Динамические показатели")
+        # Панель выбора параметра
+        self.param_panel = QWidget()
+        param_layout = QHBoxLayout()
+        param_layout.addWidget(QLabel("Выберите параметр:"))
+        self.param_selector = QComboBox()
+        self.param_selector.currentIndexChanged.connect(self.update_plots)
+        param_layout.addWidget(self.param_selector)
+        self.param_panel.setLayout(param_layout)
+        layout.addWidget(self.param_panel)
+
+        # Контейнер графиков
+        self.plot_container = QWebEngineView()
+        layout.addWidget(self.plot_container)
 
         # Кнопка возврата
         self.btn_back = QPushButton("← Назад к вводу")
         self.btn_back.clicked.connect(self.parent.show_input)
-
-        layout.addWidget(self.header)
-        layout.addWidget(self.tabs)
         layout.addWidget(self.btn_back)
         
         self.setLayout(layout)
 
-    def update_plots(self, analysis_type):
+    def update_params_list(self, analysis_type):
+        """Обновление списка параметров при загрузке данных"""
         if analysis_type == 'static':
-            self._create_static_plots()
+            params = self.parent.current_static_data.columns.tolist()
         else:
-            self._create_dynamic_plots()
+            params = self.parent.current_dynamic_data.columns.tolist()
+        
+        self.param_selector.clear()
+        self.param_selector.addItems(params)
+        if params:
+            self.current_param = params[0]
 
-    def _create_static_plots(self):
-        # Пример статических графиков
+    def update_plots(self, index):
+        """Обновление графиков при выборе параметра"""
+        param = self.param_selector.currentText()
+        if not param:
+            return
+        
+        analysis_type = 'static' if self.parent.current_static_data is not None else 'dynamic'
+        self.current_param = param
+        
+        # Создание объединенного графика
+        fig = make_subplots(rows=1, cols=2, subplot_titles=(
+            "Статический анализ", 
+            "Динамический анализ"
+        ))
+
+        # Статический график
+        if self.parent.current_static_data is not None:
+            self._add_static_plot(fig, param, row=1, col=1)
+
+        # Динамический график
+        if self.parent.current_dynamic_data is not None:
+            self._add_dynamic_plot(fig, param, row=1, col=2)
+
+        fig.update_layout(height=600, showlegend=False)
+        self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
+
+    def _add_static_plot(self, fig, param, row, col):
+        """Добавление статического графика с ограничениями"""
         df = self.parent.current_static_data
-        
-        # График 1: Распределение параметров
-        fig1 = make_subplots(rows=1, cols=2)
-        
-        for i, col in enumerate(df.columns[:2]):
-            fig1.add_trace(
-                go.Histogram(x=df[col], name=col),
-                row=1, col=i+1
+        constraints = self.parent.static_constraints.get(param, {})
+
+        # Гистограмма
+        fig.add_trace(go.Histogram(
+            x=df[param],
+            name=param,
+            marker_color='#636efa'
+        ), row=row, col=col)
+
+        # Линии ограничений
+        if constraints:
+            line_style = dict(
+                line=dict(color='red', dash='dash', width=2),
+                opacity=0.7
             )
-        fig1.update_layout(title_text="Распределение параметров")
-        
-        # График 2: Box plot
-        fig2 = go.Figure()
-        for col in df.columns[:3]:
-            fig2.add_trace(go.Box(y=df[col], name=col))
-        fig2.update_layout(title_text="Сравнение параметров")
+            
+            if constraints['type'] == 'range':
+                fig.add_vline(x=constraints['min'], **line_style, row=row, col=col)
+                fig.add_vline(x=constraints['max'], **line_style, row=row, col=col)
+                fig.add_annotation(
+                    x=constraints['min'], y=0.9, yref="paper",
+                    text=f"MIN: {constraints['min']}", showarrow=False,
+                    row=row, col=col
+                )
+                fig.add_annotation(
+                    x=constraints['max'], y=0.9, yref="paper",
+                    text=f"MAX: {constraints['max']}", showarrow=False,
+                    row=row, col=col
+                )
+            else:
+                value = constraints.get('value')
+                fig.add_vline(x=value, **line_style, row=row, col=col)
+                fig.add_annotation(
+                    x=value, y=0.9, yref="paper",
+                    text=f"{constraints['type'].upper()}: {value}",
+                    showarrow=False, row=row, col=col
+                )
 
-        # Создаем отдельные виджеты для каждого графика
-        hist_view = QWebEngineView()
-        hist_view.setHtml(fig1.to_html(include_plotlyjs='cdn'))
-        
-        box_view = QWebEngineView()
-        box_view.setHtml(fig2.to_html(include_plotlyjs='cdn'))
+        fig.update_xaxes(title_text=param, row=row, col=col)
+        fig.update_yaxes(title_text="Частота", row=row, col=col)
 
-        # Добавляем вкладки
-        self.tabs.addTab(hist_view, "Распределение")
-        self.tabs.addTab(box_view, "Box plot")
-
-    def _create_dynamic_plots(self):
-        # Пример динамических графиков
+    def _add_dynamic_plot(self, fig, param, row, col):
+        """Добавление динамического графика с ограничениями"""
         df = self.parent.current_dynamic_data
+        constraints = self.parent.dynamic_constraints.get(param, {})
         
-        # Линейный график
-        fig = go.Figure()
-        if 'timestamp' in df.columns:
-            df = df.sort_values('timestamp')
-            for col in df.columns[1:3]:
-                fig.add_trace(go.Scatter(
-                    x=df['timestamp'], 
-                    y=df[col],
-                    mode='lines+markers',
-                    name=col
-                ))
-        fig.update_layout(
-            title="Динамика показателей",
-            xaxis_title="Время",
-            yaxis_title="Значение"
-        )
-        
-        self._show_plot(fig, self.plot_container_dynamic)
+        if 'timestamp' not in df.columns:
+            return
 
-    def _show_plot(self, figure, container):
-        # Сохраняем график во временный HTML
-        html = '<html><body>'
-        html += figure.to_html(include_plotlyjs='cdn')
-        html += '</body></html>'
-        
-        # Отображаем в WebEngineView
-        container.setHtml(html)
+        # Временной ряд
+        fig.add_trace(go.Scatter(
+            x=df['timestamp'],
+            y=df[param],
+            mode='lines+markers',
+            line=dict(color='#00cc96'),
+            name=param
+        ), row=row, col=col)
+
+        # Линии ограничений
+        if constraints:
+            line_style = dict(
+                line=dict(color='red', dash='dash', width=2),
+                opacity=0.7
+            )
+            
+            if constraints['type'] == 'range':
+                fig.add_hline(y=constraints['min'], **line_style, row=row, col=col)
+                fig.add_hline(y=constraints['max'], **line_style, row=row, col=col)
+                fig.add_annotation(
+                    y=constraints['min'], x=0.1, xref="paper",
+                    text=f"MIN: {constraints['min']}", showarrow=False,
+                    row=row, col=col
+                )
+                fig.add_annotation(
+                    y=constraints['max'], x=0.1, xref="paper",
+                    text=f"MAX: {constraints['max']}", showarrow=False,
+                    row=row, col=col
+                )
+            else:
+                value = constraints.get('value')
+                fig.add_hline(y=value, **line_style, row=row, col=col)
+                fig.add_annotation(
+                    y=value, x=0.1, xref="paper",
+                    text=f"{constraints['type'].upper()}: {value}",
+                    showarrow=False, row=row, col=col
+                )
+
+        fig.update_xaxes(title_text="Время", row=row, col=col)
+        fig.update_yaxes(title_text=param, row=row, col=col)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -367,7 +434,8 @@ class MainWindow(QMainWindow):
         (analysis_type == 'dynamic' and self.current_dynamic_data is not None):
             
             try:
-                self.results_page.update_plots(analysis_type)
+                self.results_page.update_params_list(analysis_type)
+                self.results_page.update_plots(0)
                 self.stacked_widget.setCurrentIndex(1)
             except Exception as e:
                 QMessageBox.critical(self, "Ошибка", f"Ошибка визуализации: {str(e)}")
