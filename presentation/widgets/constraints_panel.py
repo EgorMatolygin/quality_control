@@ -144,6 +144,9 @@ class ConstraintsPanel(QScrollArea):
             QMessageBox.warning(self, "Ошибка", "Выберите параметр!")
             return
 
+        if param in self.parent.parent.static_constraints.keys():
+            QMessageBox.warning(self, "Ошибка", "Только одно огрничение для параметра!")
+            return
         try:
             constraint_data = {}
             display_value = ""

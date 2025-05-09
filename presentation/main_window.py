@@ -15,7 +15,9 @@ from presentation.widgets.constraints_panel import ConstraintsPanel
 
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import plotly.express as px  
 from PyQt5.QtWebEngineWidgets import QWebEngineView
+import pandas as pd
 
 class InputPage(QWidget):
     def __init__(self, parent):
@@ -222,15 +224,14 @@ class InputPage(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Ошибка расчета: {str(e)}")
 
-class ResultsPage(QWidget):
+class StaticResultsPage(QWidget):
     def __init__(self, parent):
         super().__init__()
         self.parent = parent
         self.current_param = None
-        self.init_ui()
-        
-        # Кэш для хранения расчетных статистик
         self.stats_cache = {}
+        self.init_ui()
+        self.setStyleSheet("background-color: #f0f0f0;")
 
     def init_ui(self):
         main_layout = QVBoxLayout()
@@ -309,12 +310,10 @@ class ResultsPage(QWidget):
 
         self.setLayout(main_layout)
 
-    def update_params_list(self, analysis_type):
+    def update_params_list(self):
         """Обновляет список параметров на странице результатов"""
-        if analysis_type == 'static':
-            data = self.parent.current_static_data
-        else:
-            data = self.parent.current_dynamic_data
+
+        data = self.parent.current_static_data
 
         if data is not None:
             params = [col for col in data.columns if col not in ['id', 'timestamp']]
@@ -334,38 +333,52 @@ class ResultsPage(QWidget):
         
         df = self.parent.current_static_data
         constraints = self.parent.static_constraints.get(param, {})
+        dtype = 'numeric'
+        if pd.api.types.is_string_dtype(df[param]) or pd.api.types.is_categorical_dtype(df[param]):
+            dtype = 'categorical'
+            unique_values = df[param].nunique()
         
-        # Создаем комбинированный график
-        fig = make_subplots(rows=2, cols=2,
-                          subplot_titles=[
-                              f"Распределение {param}",
-                              f"Box-plot {param}",
-                              f"Сравнение партий",
-                              f"Корреляция с толщиной"
-                          ],
-                          specs=[[{"type": "xy"}, {"type": "xy"}],
-                                 [{"type": "xy"}, {"type": "xy"}]])
+        specs = [[{"type": "xy"}, {"type": "xy"}],
+                [{"type": "xy"}, {"type": "xy"}]] if dtype == 'numeric' else \
+               [[{"type": "xy"}, {"type": "domain"}],
+                [{"type": "xy"}, {"type": "xy"}]]
         
+        fig = make_subplots(
+            rows=2, cols=2,
+            specs=specs,
+            subplot_titles=self._get_titles(param, dtype)
+        )
+        
+        if dtype == 'numeric':
+            self._add_numeric_visualizations(fig, df, param, constraints)
+        else:
+            self._add_categorical_visualizations(fig, df, param, constraints, unique_values)
+        
+        fig.update_layout(height=1000)
+        self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
+        self._update_stats_table(df, param, dtype)
+
+
+    def _get_titles(self, param, dtype):
+        base = [
+            f"Распределение {param}",
+            "Соотношение категорий" if dtype == 'categorical' else f"Box-plot {param}",
+            f"Сравнение партий",
+            "Мозаичный график" if dtype == 'categorical' else f"Корреляция с толщиной"
+        ]
+        return base
+
+    def _add_numeric_visualizations(self, fig, df, param, constraints):
         # Гистограмма с ограничениями
         self._add_histogram(fig, df, param, constraints, row=1, col=1)
-        
-        # Box-plot
-        self._add_boxplot(fig, df, param, row=1, col=2)
-        
+        # Box-plot с ограничениями
+        self._add_boxplot(fig, df, param, constraints, row=1, col=2)
         # Сравнение партий
         self._add_batch_comparison(fig, df, param, row=2, col=1)
-        
-        # Диаграмма рассеивания
-        self._add_scatterplot(fig, df, param, row=2, col=2)
-        
-        # Обновление статистик
-        self._update_stats_table(df, param, constraints)
-        
-        fig.update_layout(height=1000, showlegend=False)
-        self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
+        # Диаграмма рассеивания с ограничениями
+        self._add_scatterplot(fig, df, param, constraints, row=2, col=2)
 
     def _add_histogram(self, fig, df, param, constraints, row, col):
-        # Добавление гистограммы
         fig.add_trace(go.Histogram(
             x=df[param],
             name=param,
@@ -373,66 +386,350 @@ class ResultsPage(QWidget):
             opacity=0.7
         ), row=row, col=col)
         
-        # Линии ограничений
+        # Добавляем линии ограничений
         if constraints.get('type') == 'range':
             fig.add_vline(
-                x=constraints['min'], 
+                x=constraints['min'],
                 line=dict(color='red', dash='dash', width=2),
                 row=row, col=col
             )
             fig.add_vline(
-                x=constraints['max'], 
+                x=constraints['max'],
+                line=dict(color='red', dash='dash', width=2),
+                row=row, col=col
+            )
+        elif constraints.get('type') == 'min':
+            fig.add_vline(
+                x=constraints['value'],
+                line=dict(color='red', dash='dash', width=2),
+                row=row, col=col
+            )
+        elif constraints.get('type') == 'max':
+            fig.add_vline(
+                x=constraints['value'],
                 line=dict(color='red', dash='dash', width=2),
                 row=row, col=col
             )
 
-    def _add_boxplot(self, fig, df, param, row, col):
-        # Box-plot
+    def _add_boxplot(self, fig, df, param, constraints, row, col):
         fig.add_trace(go.Box(
             y=df[param],
             name=param,
             boxpoints='outliers',
             marker_color='#00cc96'
         ), row=row, col=col)
+        
+        # Добавляем горизонтальные линии ограничений
+        if constraints.get('type') == 'range':
+            fig.add_hline(
+                y=constraints['min'],
+                line=dict(color='red', dash='dash', width=2),
+                row=row, col=col
+            )
+            fig.add_hline(
+                y=constraints['max'],
+                line=dict(color='red', dash='dash', width=2),
+                row=row, col=col
+            )
+        elif constraints.get('type') in ['min', 'max']:
+            fig.add_hline(
+                y=constraints['value'],
+                line=dict(color='red', dash='dash', width=2),
+                row=row, col=col
+            )
 
     def _add_batch_comparison(self, fig, df, param, row, col):
-        # Сравнение по партиям
-        batches = df['batch_id'].unique()[:3]  # Первые 3 партии
-        for batch in batches:
-            fig.add_trace(go.Box(
-                y=df[df['batch_id'] == batch][param],
-                name=batch,
-                boxpoints='outliers'
-            ), row=row, col=col)
-
-    def _add_scatterplot(self, fig, df, param, row, col):
-        # Диаграмма рассеивания с толщиной
-        if 'thickness' in df.columns:
-            fig.add_trace(go.Scatter(
-                x=df['thickness'],
-                y=df[param],
-                mode='markers',
-                marker=dict(color='#ffa600', size=8)
-            ), row=row, col=col)
-
-    def _update_stats_table(self, df, param, constraints):
-        stats = {
-            'Среднее': df[param].mean(),
-            'Медиана': df[param].median(),
-            'Ст. отклонение': df[param].std(),
-            'Минимум': df[param].min(),
-            'Максимум': df[param].max(),
-            'Количество': df[param].count()
-        }
+        if 'batch_id' not in df.columns:
+            return
         
+        batches = df['batch_id'].unique()
+        colors = px.colors.qualitative.Plotly
+        
+        for i, batch in enumerate(batches):
+            batch_data = df[df['batch_id'] == batch][param]
+            fig.add_trace(go.Box(
+                y=batch_data,
+                name=str(batch),
+                marker_color=colors[i % len(colors)]),
+                row=row,
+                col=col
+            )
+    
+    def _add_scatterplot(self, fig, df, param, constraints, row, col):
+        if param not in df.columns:
+            return
+        
+        fig.add_trace(go.Scatter(
+            x=df[param],
+            y=df[param],
+            mode='markers',
+            marker=dict(color='#ffa600', size=8)
+        ), row=row, col=col)
+        
+        # Добавляем линии ограничений по оси Y
         if constraints.get('type') == 'range':
-            stats['Допустимый минимум'] = constraints['min']
-            stats['Допустимый максимум'] = constraints['max']
+            fig.add_hline(
+                y=constraints['min'],
+                line=dict(color='red', dash='dash', width=2),
+                row=row, col=col
+            )
+            fig.add_hline(
+                y=constraints['max'],
+                line=dict(color='red', dash='dash', width=2),
+                row=row, col=col
+            )
+        elif constraints.get('type') in ['min', 'max']:
+            fig.add_hline(
+                y=constraints['value'],
+                line=dict(color='red', dash='dash', width=2),
+                row=row, col=col
+            )
+
+    def _add_categorical_visualizations(self, fig, df, param, constraints, unique_values):
+        # Столбчатая диаграмма с выделением недопустимых категорий
+        self._add_bar_chart(fig, df, param, constraints, row=1, col=1)
+        
+        # Круговой график
+        if unique_values <= 10:
+            self._add_pie_chart(fig, df, param, constraints, row=1, col=2)
+        
+        # Сравнение по партиям
+        self._add_category_barchart(fig, df, param, constraints, row=2, col=1)
+
+    def _add_bar_chart(self, fig, df, param, constraints, row, col):
+        counts = df[param].value_counts().reset_index()
+        allowed = constraints.get('allowed', [])
+        
+        # Генерация цветов
+        colors = []
+        for category in counts[param]:
+            if allowed and category not in allowed:
+                colors.append('#ff7f0e')  # Недопустимые категории
+            else:
+                colors.append('#636efa')  # Стандартный цвет
+        
+        fig.add_trace(go.Bar(
+            x=counts[param],
+            y=counts['count'],
+            name=param,
+            marker_color=colors,
+            text=counts['count'],
+            textposition='auto'
+        ), row=row, col=col)
+        
+        # Добавляем аннотации для недопустимых категорий
+        if allowed:
+            for i, category in enumerate(counts[param]):
+                if category not in allowed:
+                    fig.add_annotation(
+                        x=category,
+                        y=counts['count'][i],
+                        text="Недопустимо",
+                        showarrow=True,
+                        arrowhead=1,
+                        ax=0,
+                        ay=-40,
+                        row=row,
+                        col=col
+                    )
+        
+        fig.update_xaxes(title_text=param, row=row, col=col)
+        fig.update_yaxes(title_text="Количество", row=row, col=col)
+
+    def _add_category_barchart(self, fig, df, param, constraints, row, col):
+        if 'batch_id' not in df.columns:
+            return
+        
+        allowed = constraints.get('allowed', [])
+        counts = df.groupby(['batch_id', param]).size().unstack()
+        
+        for i, category in enumerate(counts.columns):
+            # Определяем цвет категории
+            if allowed and category not in allowed:
+                color = '#ff7f0e'  # Оранжевый для недопустимых
+            else:
+                color = px.colors.qualitative.Plotly[i % 10]
+                
+            fig.add_trace(go.Bar(
+                x=counts.index,
+                y=counts[category],
+                name=category,
+                marker_color=color,
+                opacity=0.8 if allowed and category not in allowed else 1
+            ), row=row, col=col)
+        
+        fig.update_xaxes(title_text="Партия", row=row, col=col)
+        fig.update_yaxes(title_text="Количество", row=row, col=col)
+        fig.update_layout(barmode='stack')
+
+    def _add_pie_chart(self, fig, df, param, constraints, row, col):
+        counts = df[param].value_counts()
+        allowed = constraints.get('allowed', [])
+        
+        # Создаем цвета для категорий
+        colors = []
+        for category in counts.index:
+            if allowed and category not in allowed:
+                colors.append('#ff7f0e')  # Оранжевый для недопустимых
+            else:
+                colors.append(px.colors.qualitative.Plotly[len(colors) % 10])
+        
+        fig.add_trace(go.Pie(
+            labels=counts.index,
+            values=counts.values,
+            hole=0.3,
+            marker_colors=colors,
+            textinfo='percent+label',
+            hoverinfo='value'
+        ), row=row, col=col)
+        fig.update_traces(
+            textposition='inside',
+            insidetextorientation='radial',
+            row=row, 
+            col=col
+        )
+
+    def _update_stats_table(self, df, param, dtype):
+        stats = {}
+        if dtype == 'numeric':
+            stats = {
+                'Среднее': df[param].mean(),
+                'Медиана': df[param].median(),
+                'Ст. отклонение': df[param].std(),
+                'Минимум': df[param].min(),
+                'Максимум': df[param].max(),
+                'Количество': df[param].count()
+            }
+        else:
+            counts = df[param].value_counts()
+            stats = {
+                'Уникальных значений': counts.shape[0],
+                'Наиболее частый': counts.index[0],
+                'Частота моды': counts.values[0],
+                'Всего записей': counts.sum()
+            }
         
         self.stats_table.setRowCount(len(stats))
         for i, (key, value) in enumerate(stats.items()):
             self.stats_table.setItem(i, 0, QTableWidgetItem(str(key)))
-            self.stats_table.setItem(i, 1, QTableWidgetItem(f"{value:.2f}"))
+            self.stats_table.setItem(i, 1, QTableWidgetItem(f"{value:.2f}" if isinstance(value, float) else str(value)))
+
+
+class DynamicResultsPage(QWidget):
+    def __init__(self, parent):
+        super().__init__()
+        self.parent = parent
+        self.current_param = None
+        self.stats_cache = {}
+        self.init_ui()
+        self.setStyleSheet("background-color: #f0f0f0;")
+
+    def init_ui(self):
+        main_layout = QVBoxLayout()
+        
+        # Заголовок
+        self.header = QLabel("Результаты динамического анализа", self)
+        self.header.setFont(QFont('Arial', 18, QFont.Bold))
+        self.header.setAlignment(Qt.AlignCenter)
+        self.header.setStyleSheet("""
+            background-color: #00AA00;
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+        """)
+        
+        # Панель управления
+        control_panel = QWidget()
+        control_layout = QHBoxLayout()
+        
+        self.param_label = QLabel("Выберите параметр:")
+        self.param_selector = QComboBox()
+        self.time_selector = QComboBox()
+        self.time_selector.addItems(["Час", "День", "Неделя", "Месяц"])
+        
+        control_layout.addWidget(self.param_label)
+        control_layout.addWidget(self.param_selector)
+        control_layout.addWidget(QLabel("Группировка:"))
+        control_layout.addWidget(self.time_selector)
+        control_panel.setLayout(control_layout)
+        
+        # Контейнер для графиков
+        self.plot_container = QWebEngineView()
+        self.plot_container.setMinimumSize(800, 600)
+        
+        # Кнопка возврата
+        self.btn_back = QPushButton("← Назад к вводу")
+        self.btn_back.clicked.connect(self.parent.show_input)
+        
+        main_layout.addWidget(self.header)
+        main_layout.addWidget(control_panel)
+        main_layout.addWidget(self.plot_container)
+        main_layout.addWidget(self.btn_back, alignment=Qt.AlignRight)
+        
+        self.setLayout(main_layout)
+        
+        # Подключение сигналов
+        self.param_selector.currentIndexChanged.connect(self.update_plots)
+        self.time_selector.currentIndexChanged.connect(self.update_plots)
+
+    def update_params_list(self):
+        data = self.parent.current_dynamic_data
+        if data is not None:
+            params = [col for col in data.columns if col not in ['id', 'timestamp', 'time', 'date']]
+            self.param_selector.clear()
+            self.param_selector.addItems(params)
+
+    def update_plots(self):
+        param = self.param_selector.currentText()
+        time_group = self.time_selector.currentText()
+        df = self.parent.current_dynamic_data
+        
+        if df is None or param not in df.columns:
+            return
+        
+        # Преобразование временных меток
+        time_col = 'timestamp' if 'timestamp' in df.columns else 'date'
+        df[time_col] = pd.to_datetime(df[time_col])
+        
+        # Группировка данных
+        freq_map = {'Час': 'H', 'День': 'D', 'Неделя': 'W', 'Месяц': 'M'}
+        grouped = df.groupby(pd.Grouper(key=time_col, freq=freq_map[time_group]))[param].mean()
+        
+        # Создание графиков
+        fig = make_subplots(rows=2, cols=1, subplot_titles=[
+            f"Динамика параметра {param}",
+            "Контрольная карта"
+        ])
+        
+        # Временной ряд
+        fig.add_trace(go.Scatter(
+            x=grouped.index,
+            y=grouped.values,
+            mode='lines+markers',
+            name=param,
+            line=dict(color='#FFA15A')
+        ), row=1, col=1)
+        
+        # Контрольная карта
+        mean = grouped.mean()
+        std = grouped.std()
+        
+        fig.add_trace(go.Scatter(
+            x=grouped.index,
+            y=grouped.values,
+            mode='lines+markers',
+            name=param,
+            line=dict(color='#00CC96')
+        ), row=2, col=1)
+        
+        fig.add_hline(y=mean, line_dash="dot", line_color="blue", row=2, col=1)
+        fig.add_hline(y=mean + 3*std, line_dash="dash", line_color="red", row=2, col=1)
+        fig.add_hline(y=mean - 3*std, line_dash="dash", line_color="red", row=2, col=1)
+        
+        fig.update_layout(height=800, showlegend=False)
+        self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -441,64 +738,53 @@ class MainWindow(QMainWindow):
         self.setGeometry(600, 300, 1000, 800)
         self.setWindowIcon(QIcon('resources/icon.png'))
         
-        # Инициализация компонентов
-        self.init_ui()
-        
-        # Данные текущей сессии
+        # Инициализируем данные ДО создания страниц
         self.current_static_data = None
         self.current_dynamic_data = None
-
         self.static_constraints = {}
         self.dynamic_constraints = {}
-
-        self.constraints = {}
-        self.current_params = []
-
-        self.results_page = ResultsPage(self)
+        
+        # Создаем страницы результатов ПЕРЕД вызовом init_ui()
+        self.input_page = InputPage(self)
+        self.static_results_page = StaticResultsPage(self)
+        self.dynamic_results_page = DynamicResultsPage(self)
+        
+        # Инициализация UI
+        self.init_ui()
 
     def init_ui(self):
         # Создаем стек виджетов
         self.stacked_widget = QStackedWidget()
         
-        # Страницы
-        self.input_page = InputPage(self)
-        self.results_page = ResultsPage(self)
-        
+        # Добавляем ВСЕ страницы
         self.stacked_widget.addWidget(self.input_page)
-        self.stacked_widget.addWidget(self.results_page)
+        self.stacked_widget.addWidget(self.static_results_page)
+        self.stacked_widget.addWidget(self.dynamic_results_page)
         
         self.setCentralWidget(self.stacked_widget)
 
+
     def show_results(self, analysis_type):
         try:
-            # Определение данных по типу анализа
-            data = None
             if analysis_type == 'static':
+                page = self.static_results_page
                 data = self.current_static_data
+                page.update_params_list()
+                page.update_plots(0)
+                self.stacked_widget.setCurrentIndex(1)
             elif analysis_type == 'dynamic':
+                page = self.dynamic_results_page
                 data = self.current_dynamic_data
-            else:
-                QMessageBox.warning(self, "Ошибка", "Неизвестный тип анализа")
-                return
-
-            # Проверка наличия данных
+                page.update_params_list()
+                page.update_plots()
+                self.stacked_widget.setCurrentIndex(2)
+                
             if data is None or data.empty:
-                QMessageBox.warning(self, "Ошибка", "Данные не загружены. Сначала загрузите данные.")
+                QMessageBox.warning(self, "Ошибка", "Данные не загружены")
                 return
-
-            # Обновление интерфейса результатов
-            self.results_page.update_params_list(analysis_type)  # Обновляем список параметров
-            self.results_page.update_plots(0)  # Строим графики для первого параметра
-
-            # Переключение на страницу результатов
-            self.stacked_widget.setCurrentIndex(1)
 
         except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Критическая ошибка",
-                f"Ошибка при отображении результатов:\n{str(e)}"
-            )
+            QMessageBox.critical(self, "Ошибка", f"Ошибка отображения: {str(e)}")
             self.stacked_widget.setCurrentIndex(0)
 
     def show_input(self):
