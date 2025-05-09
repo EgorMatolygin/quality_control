@@ -59,8 +59,6 @@ class InputPage(QWidget):
         btn_layout = QHBoxLayout()
         self.btn_load_static = QPushButton("Загрузить CSV/Excel")
         self.btn_load_static.clicked.connect(lambda: self.load_data("static"))
-        self.btn_process_static = QPushButton("Обработать данные")
-        self.btn_process_static.clicked.connect(lambda: self.process_data("static"))
         self.btn_calculate_static = QPushButton("Рассчитать индекс")
         self.btn_calculate_static.clicked.connect(lambda: self.calculate_index("static"))
         self.btn_next_static = QPushButton("Анализировать →")
@@ -68,7 +66,6 @@ class InputPage(QWidget):
         self.btn_next_static.setEnabled(False)
         
         btn_layout.addWidget(self.btn_load_static)
-        btn_layout.addWidget(self.btn_process_static)
         btn_layout.addWidget(self.btn_calculate_static)
 
         # Панель ограничений и таблица
@@ -92,8 +89,6 @@ class InputPage(QWidget):
         btn_layout = QHBoxLayout()
         self.btn_load_dynamic = QPushButton("Загрузить CSV/Excel")
         self.btn_load_dynamic.clicked.connect(lambda: self.load_data("dynamic"))
-        self.btn_process_dynamic = QPushButton("Обработать данные")
-        self.btn_process_dynamic.clicked.connect(lambda: self.process_data("dynamic"))
         self.btn_calculate_dynamic = QPushButton("Рассчитать индекс")
         self.btn_calculate_dynamic.clicked.connect(lambda: self.calculate_index("dynamic"))
         self.btn_next_dynamic = QPushButton("Анализировать →")
@@ -101,7 +96,6 @@ class InputPage(QWidget):
         self.btn_next_dynamic.setEnabled(False)
         
         btn_layout.addWidget(self.btn_load_dynamic)
-        btn_layout.addWidget(self.btn_process_dynamic)
         btn_layout.addWidget(self.btn_calculate_dynamic)
 
         # Панель ограничений и таблица
@@ -194,8 +188,6 @@ class InputPage(QWidget):
                 processed_df = DataProcessor.preprocess_data(self.parent.current_dynamic_data)
                 self.parent.current_dynamic_data = processed_df
                 self.dynamic_table.display_data(processed_df, max_rows=50)
-                
-            QMessageBox.information(self, "Успех", "Данные обработаны!")
             
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Ошибка обработки: {str(e)}")
@@ -326,6 +318,7 @@ class StaticResultsPage(QWidget):
 
     def update_plots(self, index):
         param = self.param_selector.currentText()
+
         if (not param or 
             self.parent.current_static_data is None or 
             self.parent.current_static_data.empty):
@@ -334,6 +327,7 @@ class StaticResultsPage(QWidget):
         df = self.parent.current_static_data
         constraints = self.parent.static_constraints.get(param, {})
         dtype = 'numeric'
+
         if pd.api.types.is_string_dtype(df[param]) or pd.api.types.is_categorical_dtype(df[param]):
             dtype = 'categorical'
             unique_values = df[param].nunique()
@@ -354,7 +348,14 @@ class StaticResultsPage(QWidget):
         else:
             self._add_categorical_visualizations(fig, df, param, constraints, unique_values)
         
-        fig.update_layout(height=1000)
+        num_batches = len(df['batch_id'].unique()) if 'batch_id' in df.columns else 1
+        subplot_height = max(400, 50 * num_batches)
+        
+        fig.update_layout(
+            height=subplot_height*2,  # Для 2 рядов
+            margin=dict(l=50, r=50, t=80, b=50),
+            hovermode='x unified'
+        )
         self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
         self._update_stats_table(df, param, dtype)
 
@@ -823,12 +824,14 @@ class MainWindow(QMainWindow):
         try:
             if analysis_type == 'static':
                 page = self.static_results_page
+                self.input_page.process_data("static")
                 data = self.current_static_data
                 page.update_params_list()
                 page.update_plots(0)
                 self.stacked_widget.setCurrentIndex(1)
             elif analysis_type == 'dynamic':
                 page = self.dynamic_results_page
+                self.input_page.process_data("dynamic")
                 data = self.current_dynamic_data
                 page.update_params_list()
                 page.update_plots()
