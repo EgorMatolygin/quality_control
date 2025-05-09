@@ -363,8 +363,7 @@ class StaticResultsPage(QWidget):
         base = [
             f"Распределение {param}",
             "Соотношение категорий" if dtype == 'categorical' else f"Box-plot {param}",
-            f"Сравнение партий",
-            "Мозаичный график" if dtype == 'categorical' else f"Корреляция с толщиной"
+            f"Сравнение партий"
         ]
         return base
 
@@ -374,18 +373,39 @@ class StaticResultsPage(QWidget):
         # Box-plot с ограничениями
         self._add_boxplot(fig, df, param, constraints, row=1, col=2)
         # Сравнение партий
-        self._add_batch_comparison(fig, df, param, row=2, col=1)
+        self._add_batch_comparison(fig, df, param, constraints, row=2, col=1)
         # Диаграмма рассеивания с ограничениями
-        self._add_scatterplot(fig, df, param, constraints, row=2, col=2)
+        #self._add_scatterplot(fig, df, param, constraints, row=2, col=2)
 
     def _add_histogram(self, fig, df, param, constraints, row, col):
+        # Расчет выходящих за пределы значений
+        out_of_bounds = 0
+        if constraints:
+            if constraints['type'] == 'range':
+                min_val = constraints['min']
+                max_val = constraints['max']
+                out_of_bounds = df[(df[param] < min_val) | (df[param] > max_val)].shape[0]
+            elif constraints['type'] == 'min':
+                out_of_bounds = df[df[param] < constraints['value']].shape[0]
+            elif constraints['type'] == 'max':
+                out_of_bounds = df[df[param] > constraints['value']].shape[0]
+        
         fig.add_trace(go.Histogram(
             x=df[param],
             name=param,
             marker_color='#636efa',
-            opacity=0.7
+            opacity=0.7,
+            hovertemplate=f"<b>{param}</b>: %{{x}}<br>Count: %{{y}}<extra></extra>"
         ), row=row, col=col)
         
+        # Добавляем подписи осей
+        fig.update_xaxes(title_text=param, row=row, col=col)
+        fig.update_yaxes(title_text="Количество", row=row, col=col)
+        
+        # Сохраняем метрики для отображения в таблице
+        self.stats_cache[param] = self.stats_cache.get(param, {})
+        self.stats_cache[param]['out_of_bounds'] = int(out_of_bounds)
+
         # Добавляем линии ограничений
         if constraints.get('type') == 'range':
             fig.add_vline(
@@ -418,6 +438,9 @@ class StaticResultsPage(QWidget):
             boxpoints='outliers',
             marker_color='#00cc96'
         ), row=row, col=col)
+
+        # fig.update_xaxes(title_text=param, row=row, col=col)
+        fig.update_yaxes(title_text="Значение", row=row, col=col)
         
         # Добавляем горизонтальные линии ограничений
         if constraints.get('type') == 'range':
@@ -438,7 +461,7 @@ class StaticResultsPage(QWidget):
                 row=row, col=col
             )
 
-    def _add_batch_comparison(self, fig, df, param, row, col):
+    def _add_batch_comparison(self, fig, df, param, constraints, row, col):
         if 'batch_id' not in df.columns:
             return
         
@@ -454,19 +477,11 @@ class StaticResultsPage(QWidget):
                 row=row,
                 col=col
             )
-    
-    def _add_scatterplot(self, fig, df, param, constraints, row, col):
-        if param not in df.columns:
-            return
+
+        fig.update_xaxes(title_text="Партия", row=row, col=col)
+        fig.update_yaxes(title_text=param, row=row, col=col)
         
-        fig.add_trace(go.Scatter(
-            x=df[param],
-            y=df[param],
-            mode='markers',
-            marker=dict(color='#ffa600', size=8)
-        ), row=row, col=col)
-        
-        # Добавляем линии ограничений по оси Y
+        # Добавляем линии ограничений
         if constraints.get('type') == 'range':
             fig.add_hline(
                 y=constraints['min'],
@@ -478,12 +493,48 @@ class StaticResultsPage(QWidget):
                 line=dict(color='red', dash='dash', width=2),
                 row=row, col=col
             )
-        elif constraints.get('type') in ['min', 'max']:
+        elif constraints.get('type') == 'min':
             fig.add_hline(
                 y=constraints['value'],
                 line=dict(color='red', dash='dash', width=2),
                 row=row, col=col
             )
+        elif constraints.get('type') == 'max':
+            fig.add_hline(
+                y=constraints['value'],
+                line=dict(color='red', dash='dash', width=2),
+                row=row, col=col
+            )
+    
+    # def _add_scatterplot(self, fig, df, param, constraints, row, col):
+    #     if param not in df.columns:
+    #         return
+        
+    #     fig.add_trace(go.Scatter(
+    #         x=df[param],
+    #         y=df[param],
+    #         mode='markers',
+    #         marker=dict(color='#ffa600', size=8)
+    #     ), row=row, col=col)
+        
+    #     # Добавляем линии ограничений по оси Y
+    #     if constraints.get('type') == 'range':
+    #         fig.add_hline(
+    #             y=constraints['min'],
+    #             line=dict(color='red', dash='dash', width=2),
+    #             row=row, col=col
+    #         )
+    #         fig.add_hline(
+    #             y=constraints['max'],
+    #             line=dict(color='red', dash='dash', width=2),
+    #             row=row, col=col
+    #         )
+    #     elif constraints.get('type') in ['min', 'max']:
+    #         fig.add_hline(
+    #             y=constraints['value'],
+    #             line=dict(color='red', dash='dash', width=2),
+    #             row=row, col=col
+    #         )
 
     def _add_categorical_visualizations(self, fig, df, param, constraints, unique_values):
         # Столбчатая диаграмма с выделением недопустимых категорий
@@ -598,7 +649,8 @@ class StaticResultsPage(QWidget):
                 'Ст. отклонение': df[param].std(),
                 'Минимум': df[param].min(),
                 'Максимум': df[param].max(),
-                'Количество': df[param].count()
+                'Количество': df[param].count(),
+                'За пределами норм': self.stats_cache.get(param, {}).get('out_of_bounds', 0)
             }
         else:
             counts = df[param].value_counts()
@@ -606,13 +658,16 @@ class StaticResultsPage(QWidget):
                 'Уникальных значений': counts.shape[0],
                 'Наиболее частый': counts.index[0],
                 'Частота моды': counts.values[0],
-                'Всего записей': counts.sum()
+                'Всего записей': counts.sum(),
+                'Недопустимых значений': self.stats_cache.get(param, {}).get('out_of_bounds', 0)
             }
         
         self.stats_table.setRowCount(len(stats))
         for i, (key, value) in enumerate(stats.items()):
             self.stats_table.setItem(i, 0, QTableWidgetItem(str(key)))
-            self.stats_table.setItem(i, 1, QTableWidgetItem(f"{value:.2f}" if isinstance(value, float) else str(value)))
+            self.stats_table.setItem(i, 1, QTableWidgetItem(
+                f"{value:.2f}" if isinstance(value, (float, int)) and not isinstance(value, bool) else str(value)
+            ))
 
 
 class DynamicResultsPage(QWidget):
