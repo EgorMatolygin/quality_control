@@ -363,8 +363,9 @@ class StaticResultsPage(QWidget):
     def _get_titles(self, param, dtype):
         base = [
             f"Распределение {param}",
-            "Соотношение категорий" if dtype == 'categorical' else f"Box-plot {param}",
-            f"Сравнение партий"
+            f"Box-plot {param}" if dtype == 'numeric' else "Соотношение категорий",
+            f"Распределение по партиям",  # Новый заголовок
+            f"Контрольные пределы {param}" if dtype == 'numeric' else ""
         ]
         return base
 
@@ -374,9 +375,9 @@ class StaticResultsPage(QWidget):
         # Box-plot с ограничениями
         self._add_boxplot(fig, df, param, constraints, row=1, col=2)
         # Сравнение партий
-        self._add_batch_comparison(fig, df, param, constraints, row=2, col=1)
+        self._add_box_batch_comparison(fig, df, param, constraints, row=2, col=1)
         # Диаграмма рассеивания с ограничениями
-        #self._add_scatterplot(fig, df, param, constraints, row=2, col=2)
+        self._add_hist_batch_comparison(fig, df, param, constraints, row=2, col=2)
 
     def _add_histogram(self, fig, df, param, constraints, row, col):
         # Расчет выходящих за пределы значений
@@ -462,7 +463,7 @@ class StaticResultsPage(QWidget):
                 row=row, col=col
             )
 
-    def _add_batch_comparison(self, fig, df, param, constraints, row, col):
+    def _add_box_batch_comparison(self, fig, df, param, constraints, row, col):
         if 'batch_id' not in df.columns:
             return
         
@@ -507,35 +508,72 @@ class StaticResultsPage(QWidget):
                 row=row, col=col
             )
     
-    # def _add_scatterplot(self, fig, df, param, constraints, row, col):
-    #     if param not in df.columns:
-    #         return
+    def _add_hist_batch_comparison(self, fig, df, param, constraints, row, col):
+        if 'batch_id' not in df.columns:
+            return
         
-    #     fig.add_trace(go.Scatter(
-    #         x=df[param],
-    #         y=df[param],
-    #         mode='markers',
-    #         marker=dict(color='#ffa600', size=8)
-    #     ), row=row, col=col)
+        batches = df['batch_id'].unique()
+        colors = px.colors.qualitative.Plotly
         
-    #     # Добавляем линии ограничений по оси Y
-    #     if constraints.get('type') == 'range':
-    #         fig.add_hline(
-    #             y=constraints['min'],
-    #             line=dict(color='red', dash='dash', width=2),
-    #             row=row, col=col
-    #         )
-    #         fig.add_hline(
-    #             y=constraints['max'],
-    #             line=dict(color='red', dash='dash', width=2),
-    #             row=row, col=col
-    #         )
-    #     elif constraints.get('type') in ['min', 'max']:
-    #         fig.add_hline(
-    #             y=constraints['value'],
-    #             line=dict(color='red', dash='dash', width=2),
-    #             row=row, col=col
-    #         )
+        # Рассчитываем общие границы для бинов
+        x_min = df[param].min()
+        x_max = df[param].max()
+        n_bins = 20
+        bin_size = (x_max - x_min)/n_bins
+
+        # Добавляем гистограммы для каждого батча
+        for i, batch in enumerate(batches):
+            batch_data = df[df['batch_id'] == batch][param]
+            fig.add_trace(go.Histogram(
+                x=batch_data,
+                name=f'Партия {batch}',
+                marker_color=colors[i % len(colors)],
+                opacity=0.6,
+                xbins=dict(
+                    start=x_min,
+                    end=x_max,
+                    size=bin_size
+                ),
+                hoverinfo='y+name'
+            ), row=row, col=col)
+
+        # Настраиваем оси и внешний вид
+        fig.update_xaxes(
+            title_text=param, 
+            row=row, 
+            col=col,
+        )
+        fig.update_yaxes(title_text="Количество", row=row, col=col)
+        fig.update_layout(
+            barmode='overlay',
+            bargap=0.1,
+            hovermode='x unified'
+        )
+
+        # Добавляем линии ограничений
+        if constraints.get('type') == 'range':
+            fig.add_vline(
+                x=constraints['min'],
+                line=dict(color='red', dash='dash', width=2),
+                row=row, col=col
+            )
+            fig.add_vline(
+                x=constraints['max'],
+                line=dict(color='red', dash='dash', width=2),
+                row=row, col=col
+            )
+        elif constraints.get('type') == 'min':
+            fig.add_vline(
+                x=constraints['value'],
+                line=dict(color='red', dash='dash', width=2),
+                row=row, col=col
+            )
+        elif constraints.get('type') == 'max':
+            fig.add_vline(
+                x=constraints['value'],
+                line=dict(color='red', dash='dash', width=2),
+                row=row, col=col
+            )
 
     def _add_categorical_visualizations(self, fig, df, param, constraints, unique_values):
         # Столбчатая диаграмма с выделением недопустимых категорий
