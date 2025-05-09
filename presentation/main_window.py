@@ -362,63 +362,50 @@ class StaticResultsPage(QWidget):
 
     def _get_titles(self, param, dtype):
         base = [
-            f"Общее распределение {param}",
-            f"Box-plot {param}",
-            f"Гистограмма по партиям",
+            f"Распределение {param}",
+            "Соотношение категорий" if dtype == 'categorical' else f"Box-plot {param}",
             f"Сравнение партий"
         ]
         return base
 
     def _add_numeric_visualizations(self, fig, df, param, constraints):
-        # Новый порядок графиков:
-        self._add_main_histogram(fig, df, param, constraints, row=1, col=1)
+        # Гистограмма с ограничениями
+        self._add_histogram(fig, df, param, constraints, row=1, col=1)
+        # Box-plot с ограничениями
         self._add_boxplot(fig, df, param, constraints, row=1, col=2)
-        self._add_batch_histograms(fig, df, param, constraints, row=2, col=1)
-        self._add_batch_comparison(fig, df, param, constraints, row=2, col=2)
+        # Сравнение партий
+        self._add_batch_comparison(fig, df, param, constraints, row=2, col=1)
+        # Диаграмма рассеивания с ограничениями
+        #self._add_scatterplot(fig, df, param, constraints, row=2, col=2)
 
-    def _add_main_histogram(self, fig, df, param, constraints, row, col):
-        # Расчет базовой статистики
-        stats = df[param].describe()
-        self.stats_cache[param] = {
-            'mean': stats['mean'],
-            'std': stats['std'],
-            'min': stats['min'],
-            'max': stats['max']
-        }
-
+    def _add_histogram(self, fig, df, param, constraints, row, col):
+        # Расчет выходящих за пределы значений
+        out_of_bounds = 0
+        if constraints:
+            if constraints['type'] == 'range':
+                min_val = constraints['min']
+                max_val = constraints['max']
+                out_of_bounds = df[(df[param] < min_val) | (df[param] > max_val)].shape[0]
+            elif constraints['type'] == 'min':
+                out_of_bounds = df[df[param] < constraints['value']].shape[0]
+            elif constraints['type'] == 'max':
+                out_of_bounds = df[df[param] > constraints['value']].shape[0]
+        
         fig.add_trace(go.Histogram(
             x=df[param],
-            name="Все данные",
-            marker_color='#2A3F5F',
-            opacity=0.8,
-            hoverinfo='x+y',
-            histnorm='probability density',
-            marker=dict(
-                line=dict(
-                    width=1,
-                    color='rgba(0,0,0,0.4)'
-                )
-            )
+            name=param,
+            marker_color='#636efa',
+            opacity=0.7,
+            hovertemplate=f"<b>{param}</b>: %{{x}}<br>Count: %{{y}}<extra></extra>"
         ), row=row, col=col)
-
-        # Настройка осей
-        fig.update_xaxes(
-            title_text=param,
-            row=row,
-            col=col,
-            showgrid=True,
-            gridwidth=0.5,
-            gridcolor='LightGrey'
-        )
-        fig.update_yaxes(
-            title_text="Плотность распределения",
-            row=row,
-            col=col,
-            tickformat=".1%",
-            showgrid=True,
-            gridwidth=0.5,
-            gridcolor='LightGrey'
-        )
+        
+        # Добавляем подписи осей
+        fig.update_xaxes(title_text=param, row=row, col=col)
+        fig.update_yaxes(title_text="Количество", row=row, col=col)
+        
+        # Сохраняем метрики для отображения в таблице
+        self.stats_cache[param] = self.stats_cache.get(param, {})
+        self.stats_cache[param]['out_of_bounds'] = int(out_of_bounds)
 
         # Добавляем линии ограничений
         if constraints.get('type') == 'range':
@@ -446,24 +433,15 @@ class StaticResultsPage(QWidget):
             )
 
     def _add_boxplot(self, fig, df, param, constraints, row, col):
-        
         fig.add_trace(go.Box(
             y=df[param],
             name=param,
             boxpoints='outliers',
-            marker_color='#00CC96',
-            line_color='#2A3F5F',
-            hoverinfo='y+name',
-            jitter=0.5,
-            whiskerwidth=0.5,
-            boxmean=True
+            marker_color='#00cc96'
         ), row=row, col=col)
 
-        fig.update_layout(
-            boxmode='group',
-            boxgap=0.2,
-            boxgroupgap=0.3
-        )
+        # fig.update_xaxes(title_text=param, row=row, col=col)
+        fig.update_yaxes(title_text="Значение", row=row, col=col)
         
         # Добавляем горизонтальные линии ограничений
         if constraints.get('type') == 'range':
@@ -488,36 +466,18 @@ class StaticResultsPage(QWidget):
         if 'batch_id' not in df.columns:
             return
         
-        # Создаем violin plot для сравнения распределений
-        fig.add_trace(go.Violin(
-            x=df['batch_id'],
-            y=df[param],
-            name=param,
-            box_visible=True,
-            meanline_visible=True,
-            points='outliers',
-            marker_color='#636EFA',
-            line_color='#2A3F5F'
-        ), row=row, col=col)
-
-        # Настройка осей
-        fig.update_xaxes(
-            title_text="Номер партии",
-            row=row,
-            col=col,
-            type='category',
-            showgrid=True,
-            gridwidth=0.5,
-            gridcolor='LightGrey'
-        )
-        fig.update_yaxes(
-            title_text=param,
-            row=row,
-            col=col,
-            showgrid=True,
-            gridwidth=0.5,
-            gridcolor='LightGrey'
-        )
+        batches = df['batch_id'].unique()
+        colors = px.colors.qualitative.Plotly
+        
+        for i, batch in enumerate(batches):
+            batch_data = df[df['batch_id'] == batch][param]
+            fig.add_trace(go.Box(
+                y=batch_data,
+                name=str(batch),
+                marker_color=colors[i % len(colors)]),
+                row=row,
+                col=col
+            )
 
         fig.update_xaxes(title_text="Партия", row=row, col=col)
         fig.update_yaxes(title_text=param, row=row, col=col)
@@ -547,49 +507,35 @@ class StaticResultsPage(QWidget):
                 row=row, col=col
             )
     
-    def _add_batch_histograms(self, fig, df, param, constraints, row, col):
-        if 'batch_id' not in df.columns:
-            return
-
-        batches = df['batch_id'].unique()
-        colors = px.colors.qualitative.Dark24
+    # def _add_scatterplot(self, fig, df, param, constraints, row, col):
+    #     if param not in df.columns:
+    #         return
         
-        # Создаем групповые гистограммы с нормализацией
-        for i, batch in enumerate(batches):
-            batch_data = df[df['batch_id'] == batch][param]
-            fig.add_trace(go.Histogram(
-                x=batch_data,
-                name=f"Партия {batch}",
-                marker_color=colors[i % len(colors)],
-                opacity=0.6,
-                histnorm='probability density',
-                hoverinfo='x+y+name',
-                showlegend=True
-            ), row=row, col=col)
-
-        # Настройка осей и внешнего вида
-        fig.update_xaxes(
-            title_text=param,
-            row=row,
-            col=col,
-            showgrid=True,
-            gridwidth=0.5,
-            gridcolor='LightGrey'
-        )
-        fig.update_yaxes(
-            title_text="Плотность распределения",
-            row=row,
-            col=col,
-            tickformat=".1%",
-            showgrid=True,
-            gridwidth=0.5,
-            gridcolor='LightGrey'
-        )
-        fig.update_layout(
-            barmode='overlay',
-            bargap=0.1,
-            bargroupgap=0.05
-        )
+    #     fig.add_trace(go.Scatter(
+    #         x=df[param],
+    #         y=df[param],
+    #         mode='markers',
+    #         marker=dict(color='#ffa600', size=8)
+    #     ), row=row, col=col)
+        
+    #     # Добавляем линии ограничений по оси Y
+    #     if constraints.get('type') == 'range':
+    #         fig.add_hline(
+    #             y=constraints['min'],
+    #             line=dict(color='red', dash='dash', width=2),
+    #             row=row, col=col
+    #         )
+    #         fig.add_hline(
+    #             y=constraints['max'],
+    #             line=dict(color='red', dash='dash', width=2),
+    #             row=row, col=col
+    #         )
+    #     elif constraints.get('type') in ['min', 'max']:
+    #         fig.add_hline(
+    #             y=constraints['value'],
+    #             line=dict(color='red', dash='dash', width=2),
+    #             row=row, col=col
+    #         )
 
     def _add_categorical_visualizations(self, fig, df, param, constraints, unique_values):
         # Столбчатая диаграмма с выделением недопустимых категорий
