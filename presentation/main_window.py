@@ -10,6 +10,7 @@ from business.data_processor import DataProcessor
 from business.quality_calculator import QualityCalculator
 from data.data_manager import DataManager
 from data.database import PostgreSQLManager
+from business.arima_predictor import ARIMAPredictor
 
 from presentation.widgets.constraints_panel import ConstraintsPanel
 
@@ -18,6 +19,7 @@ from plotly.subplots import make_subplots
 import plotly.express as px  
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 import pandas as pd
+import numpy as np
 
 class InputPage(QWidget):
     def __init__(self, parent):
@@ -71,6 +73,7 @@ class InputPage(QWidget):
         # Панель ограничений и таблица
         self.static_table = TableWidget()
         self.static_table.setMinimumWidth(800)
+        self.static_table.setMaximumHeight(300)
         self.static_constraints_panel = ConstraintsPanel("static", self)
         
         layout.addLayout(btn_layout)
@@ -101,6 +104,7 @@ class InputPage(QWidget):
         # Панель ограничений и таблица
         self.dynamic_table = TableWidget()
         self.dynamic_table.setMinimumWidth(800)
+        self.dynamic_table.setMaximumHeight(250)
         self.dynamic_constraints_panel = ConstraintsPanel("dynamic", self)
         
         layout.addLayout(btn_layout)
@@ -250,7 +254,7 @@ class StaticResultsPage(QWidget):
         
         self.param_selector = QComboBox()
         self.param_selector.setFont(QFont('Arial', 12))
-        self.param_selector.setMinimumWidth(300)
+        self.param_selector.setMinimumWidth(250)
         self.param_selector.currentIndexChanged.connect(self.update_plots)
         
         control_layout.addWidget(self.param_label)
@@ -708,13 +712,13 @@ class StaticResultsPage(QWidget):
                 f"{value:.2f}" if isinstance(value, (float, int)) and not isinstance(value, bool) else str(value)
             ))
 
-
 class DynamicResultsPage(QWidget):
     def __init__(self, parent):
         super().__init__()
         self.parent = parent
         self.current_param = None
-        self.stats_cache = {}
+        self.time_group = 'День'
+        self.arima_predictor = ARIMAPredictor(self)
         self.init_ui()
         self.setStyleSheet("background-color: #f0f0f0;")
 
@@ -722,11 +726,11 @@ class DynamicResultsPage(QWidget):
         main_layout = QVBoxLayout()
         
         # Заголовок
-        self.header = QLabel("Результаты динамического анализа", self)
+        self.header = QLabel("Динамический анализ параметров качества", self)
         self.header.setFont(QFont('Arial', 18, QFont.Bold))
         self.header.setAlignment(Qt.AlignCenter)
         self.header.setStyleSheet("""
-            background-color: #00AA00;
+            background-color: #2c7da0;
             color: white;
             padding: 15px;
             border-radius: 8px;
@@ -737,40 +741,73 @@ class DynamicResultsPage(QWidget):
         control_panel = QWidget()
         control_layout = QHBoxLayout()
         
-        self.param_label = QLabel("Выберите параметр:")
+        self.param_label = QLabel("Анализируемый параметр:")
         self.param_selector = QComboBox()
+        self.param_selector.setMinimumWidth(200)
+        
+        self.time_label = QLabel("Группировка данных:")
         self.time_selector = QComboBox()
         self.time_selector.addItems(["Час", "День", "Неделя", "Месяц"])
+        self.time_selector.setCurrentIndex(1)
+        
+        self.btn_forecast = QPushButton("Построить прогноз")
+        self.btn_forecast.setStyleSheet("background-color: #468faf; color: white;")
+        self.btn_forecast.clicked.connect(self.update_plots)
         
         control_layout.addWidget(self.param_label)
         control_layout.addWidget(self.param_selector)
-        control_layout.addWidget(QLabel("Группировка:"))
+        control_layout.addWidget(self.time_label)
         control_layout.addWidget(self.time_selector)
+        control_layout.addWidget(self.btn_forecast)
         control_panel.setLayout(control_layout)
-        
+
         # Контейнер для графиков
         self.plot_container = QWebEngineView()
-        self.plot_container.setMinimumSize(800, 600)
+        self.plot_container.setMinimumSize(1000, 800)
+
+        # Панель метрик
+        metrics_panel = QGroupBox("Метрики анализа")
+        metrics_layout = QGridLayout()
         
+        self.metrics_labels = {
+            'data_points': QLabel("Точек данных:"),
+            'mean_value': QLabel("Среднее значение:"),
+            'trend': QLabel("Тренд:"),
+            'mae': QLabel("Средняя ошибка (MAE):"),
+            'aic': QLabel("Качество модели (AIC):")
+        }
+        
+        for i, (key, label) in enumerate(self.metrics_labels.items()):
+            metrics_layout.addWidget(label, i//2, i%2)
+        
+        metrics_panel.setLayout(metrics_layout)
+        metrics_panel.setStyleSheet("QGroupBox { font-weight: bold; }")
+
         # Кнопка возврата
         self.btn_back = QPushButton("← Назад к вводу")
+        self.btn_back.setStyleSheet("""
+            QPushButton {
+                background-color: #e85d04;
+                color: white;
+                padding: 8px 16px;
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #dc2f02; }
+        """)
         self.btn_back.clicked.connect(self.parent.show_input)
-        
+
         main_layout.addWidget(self.header)
         main_layout.addWidget(control_panel)
-        main_layout.addWidget(self.plot_container)
-        main_layout.addWidget(self.btn_back, alignment=Qt.AlignRight)
+        main_layout.addWidget(self.plot_container, 1)
+        main_layout.addWidget(metrics_panel)
+        main_layout.addWidget(self.btn_back)
         
         self.setLayout(main_layout)
-        
-        # Подключение сигналов
-        self.param_selector.currentIndexChanged.connect(self.update_plots)
-        self.time_selector.currentIndexChanged.connect(self.update_plots)
 
     def update_params_list(self):
-        data = self.parent.current_dynamic_data
-        if data is not None:
-            params = [col for col in data.columns if col not in ['id', 'timestamp', 'time', 'date']]
+        if self.parent.current_dynamic_data is not None:
+            params = [col for col in self.parent.current_dynamic_data.columns 
+                      if col not in ['id', 'timestamp', 'batch_id']]
             self.param_selector.clear()
             self.param_selector.addItems(params)
 
@@ -782,48 +819,133 @@ class DynamicResultsPage(QWidget):
         if df is None or param not in df.columns:
             return
         
-        # Преобразование временных меток
-        time_col = 'timestamp' if 'timestamp' in df.columns else 'date'
-        df[time_col] = pd.to_datetime(df[time_col])
-        
-        # Группировка данных
-        freq_map = {'Час': 'H', 'День': 'D', 'Неделя': 'W', 'Месяц': 'M'}
-        grouped = df.groupby(pd.Grouper(key=time_col, freq=freq_map[time_group]))[param].mean()
-        
-        # Создание графиков
-        fig = make_subplots(rows=2, cols=1, subplot_titles=[
-            f"Динамика параметра {param}",
-            "Контрольная карта"
-        ])
-        
-        # Временной ряд
-        fig.add_trace(go.Scatter(
-            x=grouped.index,
-            y=grouped.values,
-            mode='lines+markers',
-            name=param,
-            line=dict(color='#FFA15A')
-        ), row=1, col=1)
-        
-        # Контрольная карта
-        mean = grouped.mean()
-        std = grouped.std()
-        
-        fig.add_trace(go.Scatter(
-            x=grouped.index,
-            y=grouped.values,
-            mode='lines+markers',
-            name=param,
-            line=dict(color='#00CC96')
-        ), row=2, col=1)
-        
-        fig.add_hline(y=mean, line_dash="dot", line_color="blue", row=2, col=1)
-        fig.add_hline(y=mean + 3*std, line_dash="dash", line_color="red", row=2, col=1)
-        fig.add_hline(y=mean - 3*std, line_dash="dash", line_color="red", row=2, col=1)
-        
-        fig.update_layout(height=800, showlegend=False)
-        self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
+        try:
+            # Преобразование временных меток
+            time_col = 'timestamp' if 'timestamp' in df.columns else 'date'
+            df[time_col] = pd.to_datetime(df[time_col])
+            df = df.set_index(time_col).sort_index()
+            
+            # Агрегация данных
+            freq_map = {'Час': 'H', 'День': 'D', 'Неделя': 'W-MON', 'Месяц': 'MS'}
+            resampled = df[param].resample(freq_map[time_group]).mean().ffill()
+            
+            # Создание графиков
+            fig = make_subplots(
+                rows=2, cols=1,
+                specs=[[{"type": "xy"}], [{"type": "xy"}]],
+                subplot_titles=[
+                    f"Динамика параметра {param} ({time_group})",
+                    "Контрольная карта Шухарта"
+                ],
+                vertical_spacing=0.15
+            )
+            
+            # Основной временной ряд
+            fig.add_trace(go.Scatter(
+                x=resampled.index,
+                y=resampled,
+                mode='lines+markers',
+                name='Измерения',
+                line=dict(color='#1a759f')),
+                row=1, col=1
+            )
+            
+            # Прогноз ARIMA
+            forecast_data = self.arima_predictor.predict(
+                df=df.reset_index(),
+                target_col=param,
+                time_col=time_group,
+                forecast_steps=5
+            )
+            
+            if forecast_data:
+                fig.add_trace(go.Scatter(
+                    x=forecast_data['forecast'].index,
+                    y=forecast_data['forecast'],
+                    mode='lines+markers',
+                    name='Прогноз ARIMA',
+                    line=dict(color='#e85d04', dash='dot')),
+                    row=1, col=1
+                )
+                
+                # Доверительный интервал
+                fig.add_trace(go.Scatter(
+                    x=forecast_data['conf_int'].index.tolist() + 
+                      forecast_data['conf_int'].index[::-1].tolist(),
+                    y=forecast_data['conf_int'][1].tolist() + 
+                      forecast_data['conf_int'][0][::-1].tolist(),
+                    fill='toself',
+                    fillcolor='rgba(232,93,4,0.2)',
+                    line=dict(color='rgba(255,255,255,0)'),
+                    name='95% ДИ',
+                    showlegend=False
+                ), row=1, col=1)
+            
+            # Контрольная карта
+            mean = resampled.mean()
+            std = resampled.std()
+            
+            fig.add_trace(go.Scatter(
+                x=resampled.index,
+                y=resampled,
+                mode='lines+markers',
+                name='Значения',
+                line=dict(color='#1a759f')),
+                row=2, col=1
+            )
+            
+            # Границы контроля
+            for y, name, color in [
+                (mean + 3*std, 'ВКГ', '#d00000'),
+                (mean - 3*std, 'НКГ', '#d00000'),
+                (mean + 2*std, 'ПКГ', '#ffba08'),
+                (mean - 2*std, 'ПКГ', '#ffba08'),
+                (mean, 'Средняя', '#2a9d8f')
+            ]:
+                fig.add_hline(
+                    y=y,
+                    line=dict(color=color, dash='dash'),
+                    annotation_text=name,
+                    annotation_position="bottom right",
+                    row=2, col=1
+                )
+            
+            # Обновление оформления
+            fig.update_layout(
+                height=1000,
+                margin=dict(t=80, b=80),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                template='plotly_white'
+            )
+            
+            fig.update_xaxes(title_text="Дата", row=1, col=1)
+            fig.update_yaxes(title_text=param, row=1, col=1)
+            fig.update_xaxes(title_text="Дата", row=2, col=1)
+            fig.update_yaxes(title_text=param, row=2, col=1)
+            
+            self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
+            self._update_metrics(resampled, forecast_data)
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка построения графиков: {str(e)}")
 
+    def _update_metrics(self, data, forecast):
+        metrics = {
+            'data_points': f"{len(data):,}".replace(",", " "),
+            'mean_value': f"{data.mean():.2f}",
+            'trend': f"{data.pct_change().mean()*100:.1f}%",
+            'mae': f"{self._calculate_mae(forecast):.2f}" if forecast else "N/A",
+            'aic': f"{forecast['model'].aic():.1f}" if forecast else "N/A"
+        }
+        
+        for key, label in self.metrics_labels.items():
+            label.setText(f"{label.text().split(':')[0]}: {metrics.get(key, 'N/A')}")
+
+    def _calculate_mae(self, forecast):
+        if not forecast:
+            return 0
+        last_values = forecast['history'][-5:]
+        return np.mean(np.abs(last_values - forecast['forecast'][:len(last_values)]))
 
 class MainWindow(QMainWindow):
     def __init__(self):
