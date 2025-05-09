@@ -1,7 +1,7 @@
 # presentation/main_window.py
 from PyQt5.QtWidgets import (QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QFileDialog, QMessageBox, QLabel, QGroupBox, QFormLayout, QComboBox, QLineEdit, 
-                            QGridLayout, QScrollArea, QCheckBox, QTableWidget,QTableWidgetItem, QStackedWidget, QHeaderView)
+                            QGridLayout, QScrollArea, QCheckBox, QTableWidget,QTableWidgetItem, QStackedWidget, QHeaderView, QSizePolicy)
 from PyQt5.QtGui import QIcon, QFont
 from PyQt5.QtCore import Qt
 from presentation.widgets.table_widget import TableWidget
@@ -29,6 +29,7 @@ class InputPage(QWidget):
 
     def init_ui(self):
         # Заголовок
+        self.setMaximumHeight(1000)
         self.header = QLabel("Система анализа качества продукции", self)
         self.header.setFont(QFont('Georgia', 16))
         self.header.setAlignment(Qt.AlignCenter)
@@ -56,7 +57,7 @@ class InputPage(QWidget):
     def create_static_tab(self):
         widget = QWidget()
         layout = QVBoxLayout()
-        
+
         # Кнопки управления
         btn_layout = QHBoxLayout()
         self.btn_load_static = QPushButton("Загрузить CSV/Excel")
@@ -80,7 +81,7 @@ class InputPage(QWidget):
         layout.addWidget(self.static_table)
         layout.addWidget(self.static_constraints_panel)
         layout.addWidget(self.btn_next_static)
-        
+        #layout.addStretch(1)  # Добавляем растягивающееся пространство
         widget.setLayout(layout)
         return widget
 
@@ -951,7 +952,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Анализ качества продукции")
-        self.setGeometry(600, 300, 1000, 800)
+        self.setGeometry(400, 200, 800, 600)
         self.setWindowIcon(QIcon('resources/icon.png'))
         
         # Инициализируем данные ДО создания страниц
