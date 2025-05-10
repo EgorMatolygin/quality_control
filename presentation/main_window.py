@@ -712,18 +712,18 @@ class StaticResultsPage(QWidget):
             self.stats_table.setItem(i, 1, QTableWidgetItem(
                 f"{value:.2f}" if isinstance(value, (float, int)) and not isinstance(value, bool) else str(value)
             ))
+
 class DynamicResultsPage(QWidget):
     def __init__(self, parent):
         super().__init__()
         self.parent = parent
         self.current_param = None
+        self.df = None
+        self.forecast_steps = 30
         self.arima_predictor = ARIMAPredictor(self)
-        self.forecast_steps = 30  # Увеличим период прогноза
         self.init_ui()
-        self.setStyleSheet("background-color: #f0f0f0;")
 
     def init_ui(self):
-        # Удаляем все упоминания time_selector и связанные элементы
         main_layout = QVBoxLayout()
         
         # Заголовок
@@ -738,7 +738,7 @@ class DynamicResultsPage(QWidget):
             margin: 10px 0;
         """)
         
-        # Упрощенная панель управления
+        # Панель управления
         control_panel = QWidget()
         control_layout = QHBoxLayout()
         
@@ -785,34 +785,31 @@ class DynamicResultsPage(QWidget):
         self.setLayout(main_layout)
 
     def update_plots(self):
-        param = self.param_selector.currentText()
-        df = self.parent.current_dynamic_data
-        
         try:
-            if df is None:
+            self.current_param = self.param_selector.currentText()
+            self.df = self.parent.current_dynamic_data
+            
+            if self.df is None:
                 raise ValueError("Данные не загружены")
                 
-            if param not in df.columns:
-                raise ValueError(f"Параметр '{param}' не найден в данных")
+            if self.current_param not in self.df.columns:
+                raise ValueError(f"Параметр '{self.current_param}' не найден в данных")
 
-            # Проверка и обработка временных меток
-            time_col = 'timestamp' if 'timestamp' in df.columns else 'date'
+            # Обработка временных данных
+            time_col = 'timestamp' if 'timestamp' in self.df.columns else 'date'
+            self.df = DataProcessor._preprocess_time_data(self.df, time_col)
             
-            # Преобразование и очистка временных данных
-            df_clean = DataProcessor._preprocess_time_data(df, time_col, param)
-            
-            # Дальнейшая обработка данных
-            self._generate_plots(df_clean, param, time_col)
+            # Построение графиков
+            self._generate_plots()
 
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Ошибка построения графиков: {str(e)}")
 
-    def _generate_plots(self, df, param, time_col):
-        """Генерация графиков с обработанными данными"""
+    def _generate_plots(self):
         fig = make_subplots(
             rows=2, cols=1,
             subplot_titles=[
-                f"Динамика параметра {param}",
+                f"Динамика параметра {self.current_param}",
                 "Контрольные границы и прогноз"
             ],
             vertical_spacing=0.15
@@ -820,28 +817,27 @@ class DynamicResultsPage(QWidget):
     
         # Основной график
         fig.add_trace(go.Scatter(
-            x=df.index,
-            y=df[param],
+            x=self.df.index,
+            y=self.df[self.current_param],
             mode='lines+markers',
             name='Фактические значения',
             line=dict(color='#1a759f')
         ), row=1, col=1)
         
-        # Прогноз и доверительный интервал
+        # Прогноз
         forecast_data = self.arima_predictor.predict(
-            df=df.reset_index(),
-            target_col=param,
-            forecast_steps=30
+            df=self.df.reset_index(),
+            target_col=self.current_param,
+            forecast_steps=self.forecast_steps
         )
         
         if forecast_data:
-            # Добавление прогноза
             self._add_forecast(fig, forecast_data)
         
         # Контрольные границы
         self._add_control_limits(fig)
         
-        # Обновление оформления
+        # Оформление
         fig.update_layout(
             height=800,
             template='plotly_white',
@@ -851,36 +847,18 @@ class DynamicResultsPage(QWidget):
         self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
 
     def _add_forecast(self, fig, forecast_data):
-        """Добавление прогноза и доверительного интервала с расширением временной оси"""
-        if forecast_data is None:
-            return
-            
         try:
-            # Объединяем исторические данные и прогноз
             full_index = self.df.index.union(forecast_data['forecast'].index)
             
-            # Основной график с расширенной осью X
-            fig.add_trace(go.Scatter(
-                x=full_index,
-                y=np.concatenate([self.df[self.param].values, 
-                                [None]*len(forecast_data['forecast'])]),
-                mode='lines+markers',
-                name='Исторические данные',
-                line=dict(color='#1a759f'),
-                showlegend=False
-            ), row=1, col=1)
-
-            # Прогнозная часть
             fig.add_trace(go.Scatter(
                 x=forecast_data['forecast'].index,
                 y=forecast_data['forecast'],
                 mode='lines+markers',
                 name='Прогноз',
-                line=dict(color='#e85d04', width=2),
-                marker=dict(size=6)
-            ), row=1, col=1)
+                line=dict(color='#e85d04', width=2)),
+                row=1, col=1
+            )
 
-            # Доверительный интервал
             fig.add_trace(go.Scatter(
                 x=forecast_data['conf_int'].index.tolist() + 
                 forecast_data['conf_int'].index[::-1].tolist(),
@@ -897,20 +875,18 @@ class DynamicResultsPage(QWidget):
             print(f"Ошибка визуализации прогноза: {str(e)}")
 
     def _add_control_limits(self, fig):
-        """Обновленный метод для отображения границ"""
-        constraints = self.parent.dynamic_constraints.get(self.param, {})
+        constraints = self.parent.dynamic_constraints.get(self.current_param, {})
         
-        # Расчет границ
         if constraints.get('type') == 'range':
-            lower = constraints.get('min', self.df[self.param].min())
-            upper = constraints.get('max', self.df[self.param].max())
+            lower = constraints.get('min', self.df[self.current_param].min())
+            upper = constraints.get('max', self.df[self.current_param].max())
         else:
-            mean = self.df[self.param].mean()
-            std = self.df[self.param].std()
+            mean = self.df[self.current_param].mean()
+            std = self.df[self.current_param].std()
             lower = mean - 3*std
             upper = mean + 3*std
 
-        # Добавляем границы на оба сублота
+        # Добавление границ
         for row in [1, 2]:
             fig.add_hline(
                 y=upper,
@@ -925,12 +901,12 @@ class DynamicResultsPage(QWidget):
                 row=row, col=1
             )
 
-        # Выделяем только фактические нарушения
-        outliers = self.df[(self.df[self.param] < lower) | 
-                        (self.df[self.param] > upper)]
+        # Отображение нарушений
+        outliers = self.df[(self.df[self.current_param] < lower) | 
+                         (self.df[self.current_param] > upper)]
         fig.add_trace(go.Scatter(
             x=outliers.index,
-            y=outliers[self.param],
+            y=outliers[self.current_param],
             mode='markers',
             marker=dict(color='red', size=8, symbol='x'),
             name='Нарушения',
@@ -938,137 +914,16 @@ class DynamicResultsPage(QWidget):
             showlegend=False
         ), row=2, col=1)
 
-    def _add_main_plot(self, fig, df, param, constraints):
-        # Прогноз ARIMA
-        forecast_data = self.arima_predictor.predict(
-            df=df.reset_index(),
-            target_col=param,
-            forecast_steps=self.forecast_steps
-        )
-        
-        # Исторические данные
-        fig.add_trace(go.Scatter(
-            x=df.index,
-            y=df[param],
-            mode='lines+markers',
-            name='Исторические данные',
-            line=dict(color='#1a759f')),
-            row=1, col=1
-        )
-        
-        # Прогноз
-        if forecast_data:
-            fig.add_trace(go.Scatter(
-                x=forecast_data['forecast'].index,
-                y=forecast_data['forecast'],
-                mode='lines+markers',
-                name='Прогноз',
-                line=dict(color='#e85d04', dash='dot')),
-                row=1, col=1
-            )
-            
-            # Доверительный интервал
-            fig.add_trace(go.Scatter(
-                x=forecast_data['conf_int'].index.tolist() + 
-                  forecast_data['conf_int'].index[::-1].tolist(),
-                y=forecast_data['conf_int'][1].tolist() + 
-                  forecast_data['conf_int'][0][::-1].tolist(),
-                fill='toself',
-                fillcolor='rgba(232,93,4,0.2)',
-                line=dict(color='rgba(255,255,255,0)'),
-                name='95% ДИ',
-                showlegend=True
-            ), row=1, col=1)
-            
-        # Границы допустимости
-        if constraints:
-            self._add_constraint_lines(fig, constraints, df.index, row=1)
-
-    def _add_control_chart(self, fig, df, param, constraints):
-        # Рассчитываем статистики
-        mean = df[param].mean()
-        std = df[param].std()
-        
-        # Границы по умолчанию
-        lower_bound = mean - 3*std
-        upper_bound = mean + 3*std
-        
-        # Если есть ограничения в настройках
-        if constraints.get('type') == 'range':
-            lower_bound = constraints.get('min', lower_bound)
-            upper_bound = constraints.get('max', upper_bound)
-        
-        # Визуализация отклонений
-        df['out_of_bounds'] = np.where(
-            (df[param] < lower_bound) | (df[param] > upper_bound), 1, 0)
-        
-        fig.add_trace(go.Scatter(
-            x=df.index,
-            y=df[param],
-            mode='lines+markers',
-            name='Значения',
-            line=dict(color='#1a759f')),
-            row=2, col=1
-        )
-        
-        # Границы
-        for bound, color, name in [
-            (upper_bound, '#d00000', 'Верхняя граница'),
-            (lower_bound, '#d00000', 'Нижняя граница')
-        ]:
-            fig.add_hline(
-                y=bound,
-                line=dict(color=color, dash='dash', width=2),
-                annotation_text=name,
-                annotation_position="bottom right",
-                row=2, col=1
-            )
-
-    def _add_constraint_lines(self, fig, constraints, dates, row):
-        """Добавляет линии ограничений на график"""
-        if constraints.get('type') == 'range':
-            fig.add_hline(
-                y=constraints['min'],
-                line=dict(color='green', dash='dot', width=2),
-                annotation_text="Минимум",
-                row=row, col=1
-            )
-            fig.add_hline(
-                y=constraints['max'],
-                line=dict(color='green', dash='dot', width=2),
-                annotation_text="Максимум",
-                row=row, col=1
-            )
-        elif constraints.get('type') == 'min':
-            fig.add_hline(
-                y=constraints['value'],
-                line=dict(color='green', dash='dot', width=2),
-                annotation_text="Минимальное значение",
-                row=row, col=1
-            )
-        elif constraints.get('type') == 'max':
-            fig.add_hline(
-                y=constraints['value'],
-                line=dict(color='green', dash='dot', width=2),
-                annotation_text="Максимальное значение",
-                row=row, col=1
-            )
-
     def update_params_list(self):
-        """Обновляет список доступных параметров"""
         if self.parent.current_dynamic_data is not None:
-            # Исключаем служебные колонки
             excluded_columns = {'id', 'timestamp', 'date', 'batch_id'}
             params = [col for col in self.parent.current_dynamic_data.columns 
                     if col.lower() not in excluded_columns]
             
-            # Сохраняем текущий выбор
             current_selection = self.param_selector.currentText()
-            
             self.param_selector.clear()
             self.param_selector.addItems(params)
             
-            # Восстанавливаем выбор если параметр все еще существует
             if current_selection in params:
                 self.param_selector.setCurrentText(current_selection)
             elif params:
