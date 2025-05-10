@@ -255,7 +255,7 @@ class StaticResultsPage(QWidget):
         
         self.param_selector = QComboBox()
         self.param_selector.setFont(QFont('Arial', 12))
-        self.param_selector.setMinimumHeight(250)
+        # self.param_selector.setMinimumHeight(50)
         self.param_selector.currentIndexChanged.connect(self.update_plots)
         
         control_layout.addWidget(self.param_label)
