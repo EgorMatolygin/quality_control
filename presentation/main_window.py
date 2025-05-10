@@ -134,7 +134,7 @@ class InputPage(QWidget):
             
             # Извлечение списка параметров (исключая служебные колонки)
             params = [col for col in df.columns 
-                    if col.lower() not in ['id', 'timestamp', 'time', 'date']]
+                    if col.lower() not in ['id', 'timestamp', 'time', 'date',"batch_id", 'product_id']]
             
             # Обновление интерфейса для соответствующего типа анализа
             if analysis_type == "static":
@@ -752,6 +752,7 @@ class DynamicResultsPage(QWidget):
         self.batch_label = QLabel("Партия:")
         self.batch_selector = QComboBox()
         self.batch_selector.addItem("Все партии")
+        self.batch_selector.setCurrentIndex(0)
         self.batch_selector.currentIndexChanged.connect(self.update_plots)
         
         # Кнопка прогноза
@@ -812,6 +813,7 @@ class DynamicResultsPage(QWidget):
             
             # Обновление партий
             self.batch_selector.clear()
+
             self.batch_selector.addItem("Все партии")
             
             # Поиск колонки с партиями
@@ -834,22 +836,50 @@ class DynamicResultsPage(QWidget):
         return (None, None)
 
     def filter_data(self):
-        """Фильтрует данные по выбранной партии"""
+        """Фильтрация с проверкой существования колонки и значений"""
         df = self.parent.current_dynamic_data
         if df is None:
-            QMessageBox.warning(self, "Ошибка", "Данные не загружены")
             return None
-            
+
         batch = self.batch_selector.currentText()
-        if batch != "Все партии":
-            # Поиск колонки с партиями
-            batch_col = next((col for col in df.columns if col.lower() in ['batch_id', 'batch']), None)
-            if batch_col:
-                return df[df[batch_col].astype(str) == batch]
-            else:
-                QMessageBox.warning(self, "Ошибка", "Колонка с партиями не найдена")
+        if batch == "Все партии" or batch == "":
+            return df
+
+        # Поиск колонки с партиями с учетом возможных вариантов
+        batch_col = None
+        possible_names = ['batch_id', 'batch', 'lot', 'партия', 'lot_id', 'part_number']
+        for col in df.columns:
+            if col.lower() in possible_names:
+                batch_col = col
+                break
+
+        if not batch_col:
+            QMessageBox.warning(self, "Ошибка", 
+                f"Колонка с партиями не найдена! Доступные колонки:\n{', '.join(df.columns)}")
+            return df
+
+        # Проверка существования выбранной партии
+        try:
+            available_batches = df[batch_col].astype(str).unique()
+            if batch not in available_batches:
+                QMessageBox.warning(self, "Ошибка", 
+                    f"Партия '{batch}' не найдена в колонке '{batch_col}'\n"
+                    f"Доступные партии:\n{', '.join(available_batches)}")
                 return df
-        return df
+        except Exception as e:
+            QMessageBox.warning(self, "Ошибка", f"Ошибка проверки партий: {str(e)}")
+            return df
+
+        # Фильтрация данных
+        try:
+            filtered_df = df[df[batch_col].astype(str) == batch]
+            if filtered_df.empty:
+                QMessageBox.warning(self, "Ошибка", 
+                    f"Нет данных для партии '{batch}' в колонке '{batch_col}'")
+            return filtered_df
+        except Exception as e:
+            QMessageBox.warning(self, "Ошибка", f"Ошибка фильтрации: {str(e)}")
+            return df
 
     def update_plots(self, index=None):
         """Обновляет график временных рядов"""
@@ -914,11 +944,10 @@ class DynamicResultsPage(QWidget):
 
             #Прогноз
             result = self.arima_predictor.predict(df, param, time_col=time_col)
+
+            print(result)
             if result is None:
                 return
-            
-            print("Forecast data:", result['forecast'].head())
-            print("Confidence interval:", result['conf_int'].head())    
 
             # Проверка данных прогноза
             if len(result['forecast']) == 0:
