@@ -906,13 +906,21 @@ class DynamicResultsPage(QWidget):
             if df is None or param not in df.columns:
                 return
 
+             # Поиск и проверка временной колонки
+            time_col = next((col for col in df.columns if col.lower() in ['timestamp', 'time', 'date']), None)
+            if not time_col:
+                QMessageBox.warning(self, "Ошибка", "Временная колонка не найдена!")
+                return
+
+            # Явная передача time_col в predict
+            result = self.arima_predictor.predict(
+                df=df, 
+                target_col=param, 
+                time_col=time_col  # Добавляем явное указание колонки времени
+            )
+
             # Получаем ограничения параметра
             min_limit, max_limit = self.get_param_constraints(param)
-            
-            # Прогнозирование
-            result = self.arima_predictor.predict(df, param)
-            if result is None:
-                return
 
             # Создаем график
             fig = go.Figure()
