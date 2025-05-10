@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import QMessageBox
 
 class ARIMAPredictor:
     def __init__(self, parent):
-        self.parent = parent  # Для доступа к данным и вывода ошибок
+        self.parent = parent
 
     def predict(self, df, target_col, time_col='timestamp', forecast_steps=5):
         try:
@@ -17,13 +17,13 @@ class ARIMAPredictor:
             series = df[target_col].dropna()
             
             if len(series) < 30:
-                raise ValueError("Недостаточно данных для построения прогноза (минимум 30 точек)")
-            
+                raise ValueError("Недостаточно данных для прогноза (минимум 30 точек)")
+
             # Автоподбор параметров ARIMA
             model = auto_arima(
                 series,
                 seasonal=False,
-                trace=False,
+                trace=True,  # Включаем логгирование для диагностики
                 error_action='ignore',
                 suppress_warnings=True
             )
@@ -33,8 +33,9 @@ class ARIMAPredictor:
                 n_periods=forecast_steps,
                 return_conf_int=True
             )
-            
-            # Формирование результата
+
+        
+            # Генерация дат прогноза
             last_date = series.index[-1]
             freq = pd.infer_freq(series.index) or 'D'
             future_dates = pd.date_range(
@@ -42,6 +43,8 @@ class ARIMAPredictor:
                 periods=forecast_steps, 
                 freq=freq
             )
+            print("ARIMA raw forecast:", forecast)
+            print("ARIMA forecast:", pd.Series(forecast, index=future_dates))
             
             return {
                 'history': series,

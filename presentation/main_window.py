@@ -912,12 +912,18 @@ class DynamicResultsPage(QWidget):
                 QMessageBox.warning(self, "Ошибка", "Временная колонка не найдена!")
                 return
 
-            # Явная передача time_col в predict
-            result = self.arima_predictor.predict(
-                df=df, 
-                target_col=param, 
-                time_col=time_col  # Добавляем явное указание колонки времени
-            )
+            #Прогноз
+            result = self.arima_predictor.predict(df, param, time_col=time_col)
+            if result is None:
+                return
+            
+            print("Forecast data:", result['forecast'].head())
+            print("Confidence interval:", result['conf_int'].head())    
+
+            # Проверка данных прогноза
+            if len(result['forecast']) == 0:
+                QMessageBox.warning(self, "Ошибка", "Невозможно построить прогноз: недостаточно данных")
+                return
 
             # Получаем ограничения параметра
             min_limit, max_limit = self.get_param_constraints(param)
@@ -925,23 +931,24 @@ class DynamicResultsPage(QWidget):
             # Создаем график
             fig = go.Figure()
             
-            # Исторические данные
+            # 1. Исторические данные
             fig.add_trace(go.Scatter(
                 x=result['history'].index,
                 y=result['history'].values,
                 mode='lines+markers',
                 name='История',
-                line=dict(color='#1f77b4'))
-            )
+                line=dict(color='#1f77b4', width=2)
+            ))
             
-            # Прогноз и доверительный интервал
+            # 2. Прогноз 
             fig.add_trace(go.Scatter(
                 x=result['forecast'].index,
                 y=result['forecast'].values,
                 mode='lines+markers',
                 name='Прогноз',
-                line=dict(color='#ff7f0e', dash='dot'))
-            )
+                line=dict(color='#ff7f0e', width=3, dash='solid'),
+                marker=dict(size=8, symbol='diamond')
+            ))
             
             fig.add_trace(go.Scatter(
                 x=result['conf_int'].index.tolist() + result['conf_int'].index[::-1].tolist(),
