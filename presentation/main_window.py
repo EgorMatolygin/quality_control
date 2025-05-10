@@ -255,7 +255,7 @@ class StaticResultsPage(QWidget):
         
         self.param_selector = QComboBox()
         self.param_selector.setFont(QFont('Arial', 12))
-        self.param_selector.setMinimumWidth(250)
+        self.param_selector.setMinimumHeight(250)
         self.param_selector.currentIndexChanged.connect(self.update_plots)
         
         control_layout.addWidget(self.param_label)
@@ -931,6 +931,7 @@ class DynamicResultsPage(QWidget):
         """Запускает прогнозирование ARIMA с ограничениями"""
         try:
             param = self.param_selector.currentText()
+            batch = self.batch_selector.currentText()
             df = self.filter_data()
             
             if df is None or param not in df.columns:

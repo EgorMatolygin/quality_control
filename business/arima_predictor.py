@@ -61,8 +61,6 @@ class ARIMAPredictor:
                 freq=freq
             )[1:]
 
-            print('123 gbgfbgb',pd.Series(forecast.to_list(), index=future_dates))
-
             # Создание результата
             return {
                 'history': series,
