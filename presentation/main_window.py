@@ -787,7 +787,7 @@ class DynamicResultsPage(QWidget):
     def update_plots(self):
         try:
             self.current_param = self.param_selector.currentText()
-            self.df = self.parent.current_dynamic_data
+            self.df = self.parent.current_dynamic_data.copy()
             
             if self.df is None:
                 raise ValueError("Данные не загружены")
@@ -797,7 +797,8 @@ class DynamicResultsPage(QWidget):
 
             # Обработка временных данных
             time_col = 'timestamp' if 'timestamp' in self.df.columns else 'date'
-            self.df = DataProcessor._preprocess_time_data(self.df, time_col)
+            self.df[time_col] = pd.to_datetime(self.df[time_col])
+            self.df.set_index(time_col, inplace=True)
             
             # Построение графиков
             self._generate_plots()
@@ -810,83 +811,112 @@ class DynamicResultsPage(QWidget):
             rows=2, cols=1,
             subplot_titles=[
                 f"Динамика параметра {self.current_param}",
-                "Контрольные границы и прогноз"
+                "Анализ контрольных границ"
             ],
-            vertical_spacing=0.15
+            vertical_spacing=0.15,
+            specs=[[{"type": "scatter"}], [{"type": "scatter"}]]
         )
-    
-        # Основной график
-        fig.add_trace(go.Scatter(
-            x=self.df.index,
-            y=self.df[self.current_param],
-            mode='lines+markers',
-            name='Фактические значения',
-            line=dict(color='#1a759f')
-        ), row=1, col=1)
         
-        # Прогноз
+        dtype = 'numeric' if pd.api.types.is_numeric_dtype(self.df[self.current_param]) else 'categorical'
+        
+        if dtype == 'numeric':
+            self._generate_numeric_plots(fig)
+        else:
+            self._generate_categorical_plots(fig)
+        
+        # Общее оформление
+        fig.update_layout(
+            height=900,
+            template='plotly_white',
+            margin=dict(t=60, b=20),
+            legend=dict(orientation="h", y=1.1)
+        )
+        self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
+
+    def _generate_numeric_plots(self, fig):
+        # Основной график временного ряда
+        self._add_main_timeseries(fig)
+        
+        # Прогнозирование
         forecast_data = self.arima_predictor.predict(
             df=self.df.reset_index(),
             target_col=self.current_param,
             forecast_steps=self.forecast_steps
         )
-        
         if forecast_data:
             self._add_forecast(fig, forecast_data)
         
-        # Контрольные границы
+        # Контрольные границы и анализ
         self._add_control_limits(fig)
         
-        # Оформление
-        fig.update_layout(
-            height=800,
-            template='plotly_white',
-            margin=dict(t=40, b=20),
-            legend=dict(orientation="h", y=1.02)
+        # Разбивка по партиям
+        if 'batch_id' in self.df.columns:
+            self._add_batch_analysis(fig)
+
+    def _add_batch_analysis(self, fig):
+        """Добавляет анализ по партиям"""
+        batches = self.df['batch_id'].unique()
+        colors = px.colors.qualitative.Plotly
+        
+        for i, batch in enumerate(batches):
+            batch_data = self.df[self.df['batch_id'] == batch]
+            fig.add_trace(go.Scatter(
+                x=batch_data.index,
+                y=batch_data[self.current_param],
+                mode='markers',
+                marker=dict(color=colors[i % len(colors)], size=8,
+                name=f'Партия {batch}',
+                showlegend=False)
+            ), row=2, col=1)
+
+    def _add_main_timeseries(self, fig):
+        """Добавляет основной график временного ряда"""
+        fig.add_trace(go.Scatter(
+            x=self.df.index,
+            y=self.df[self.current_param],
+            mode='lines+markers',
+            name='Фактические значения',
+            line=dict(color='#1a759f', width=2)),
+            row=1, col=1
         )
-        self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
 
     def _add_forecast(self, fig, forecast_data):
-        try:
-            full_index = self.df.index.union(forecast_data['forecast'].index)
-            
-            fig.add_trace(go.Scatter(
-                x=forecast_data['forecast'].index,
-                y=forecast_data['forecast'],
-                mode='lines+markers',
-                name='Прогноз',
-                line=dict(color='#e85d04', width=2)),
-                row=1, col=1
-            )
-
-            fig.add_trace(go.Scatter(
-                x=forecast_data['conf_int'].index.tolist() + 
-                forecast_data['conf_int'].index[::-1].tolist(),
-                y=forecast_data['conf_int'][1].tolist() + 
-                forecast_data['conf_int'][0][::-1].tolist(),
-                fill='toself',
-                fillcolor='rgba(232,93,4,0.2)',
-                line=dict(color='rgba(255,255,255,0)'),
-                name='95% ДИ',
-                hoverinfo='skip'
-            ), row=1, col=1)
-
-        except Exception as e:
-            print(f"Ошибка визуализации прогноза: {str(e)}")
+        """Добавляет прогнозные значения"""
+        fig.add_trace(go.Scatter(
+            x=forecast_data['forecast'].index,
+            y=forecast_data['forecast'],
+            mode='lines+markers',
+            name='Прогноз',
+            line=dict(color='#e85d04', width=2, dash='dot')),
+            row=1, col=1
+        )
+        
+        # Доверительный интервал
+        fig.add_trace(go.Scatter(
+            x=forecast_data['conf_int'].index.tolist() + forecast_data['conf_int'].index[::-1].tolist(),
+            y=forecast_data['conf_int'][1].tolist() + forecast_data['conf_int'][0][::-1].tolist(),
+            fill='toself',
+            fillcolor='rgba(232,93,4,0.2)',
+            line=dict(color='rgba(255,255,255,0)'),
+            name='95% ДИ',
+            hoverinfo='skip'
+        ), row=1, col=1)
 
     def _add_control_limits(self, fig):
+        """Добавляет контрольные границы и анализ аномалий"""
         constraints = self.parent.dynamic_constraints.get(self.current_param, {})
         
+        # Рассчитываем границы
         if constraints.get('type') == 'range':
-            lower = constraints.get('min', self.df[self.current_param].min())
-            upper = constraints.get('max', self.df[self.current_param].max())
+            lower = constraints.get('min')
+            upper = constraints.get('max')
         else:
             mean = self.df[self.current_param].mean()
             std = self.df[self.current_param].std()
             lower = mean - 3*std
             upper = mean + 3*std
 
-        # Добавление границ
+        # Линии границ
         for row in [1, 2]:
             fig.add_hline(
                 y=upper,
@@ -901,7 +931,7 @@ class DynamicResultsPage(QWidget):
                 row=row, col=1
             )
 
-        # Отображение нарушений
+        # Аномальные значения
         outliers = self.df[(self.df[self.current_param] < lower) | 
                          (self.df[self.current_param] > upper)]
         fig.add_trace(go.Scatter(
@@ -909,10 +939,43 @@ class DynamicResultsPage(QWidget):
             y=outliers[self.current_param],
             mode='markers',
             marker=dict(color='red', size=8, symbol='x'),
-            name='Нарушения',
-            hoverinfo='x+y',
-            showlegend=False
-        ), row=2, col=1)
+            name='Нарушения'),
+            row=2, col=1
+        )
+
+    def _generate_categorical_plots(self, fig):
+        """Генерирует графики для категориальных данных"""
+        # Агрегируем данные по дням
+        df_resampled = self.df.resample('D')[self.current_param].value_counts().unstack().fillna(0)
+        
+        # Stacked bar chart для категорий
+        for category in df_resampled.columns:
+            fig.add_trace(go.Bar(
+                x=df_resampled.index,
+                y=df_resampled[category],
+                name=category,
+                hoverinfo='y+name',
+                marker=dict(line=dict(width=0))
+            ), row=1, col=1)
+        
+        # Анализ контрольных границ
+        constraints = self.parent.dynamic_constraints.get(self.current_param, {})
+        if 'allowed' in constraints:
+            invalid = self.df[~self.df[self.current_param].isin(constraints['allowed'])]
+            fig.add_trace(go.Scatter(
+                x=invalid.index,
+                y=invalid[self.current_param],
+                mode='markers',
+                marker=dict(color='red', size=8, symbol='x'),
+                name='Недопустимые значения',
+                hovertext=invalid[self.current_param]
+            ), row=2, col=1)
+        
+        # Оформление
+        fig.update_layout(barmode='stack', row=1, col=1)
+        fig.update_yaxes(title_text="Количество", row=1, col=1)
+        fig.update_xaxes(title_text="Дата", row=1, col=1)
+        fig.update_xaxes(title_text="Дата", row=2, col=1)
 
     def update_params_list(self):
         if self.parent.current_dynamic_data is not None:
