@@ -105,7 +105,7 @@ class InputPage(QWidget):
         # Панель ограничений и таблица
         self.dynamic_table = TableWidget()
         self.dynamic_table.setMinimumWidth(800)
-        self.dynamic_table.setMaximumHeight(250)
+        self.dynamic_table.setMaximumHeight(300)
         self.dynamic_constraints_panel = ConstraintsPanel("dynamic", self)
         
         layout.addLayout(btn_layout)
@@ -712,18 +712,18 @@ class StaticResultsPage(QWidget):
             self.stats_table.setItem(i, 1, QTableWidgetItem(
                 f"{value:.2f}" if isinstance(value, (float, int)) and not isinstance(value, bool) else str(value)
             ))
-
 class DynamicResultsPage(QWidget):
     def __init__(self, parent):
         super().__init__()
         self.parent = parent
         self.current_param = None
-        self.time_group = 'День'
         self.arima_predictor = ARIMAPredictor(self)
+        self.forecast_steps = 30  # Увеличим период прогноза
         self.init_ui()
         self.setStyleSheet("background-color: #f0f0f0;")
 
     def init_ui(self):
+        # Удаляем все упоминания time_selector и связанные элементы
         main_layout = QVBoxLayout()
         
         # Заголовок
@@ -738,51 +738,31 @@ class DynamicResultsPage(QWidget):
             margin: 10px 0;
         """)
         
-        # Панель управления
+        # Упрощенная панель управления
         control_panel = QWidget()
         control_layout = QHBoxLayout()
         
         self.param_label = QLabel("Анализируемый параметр:")
         self.param_selector = QComboBox()
-        self.param_selector.setMinimumWidth(200)
-        
-        self.time_label = QLabel("Группировка данных:")
-        self.time_selector = QComboBox()
-        self.time_selector.addItems(["Час", "День", "Неделя", "Месяц"])
-        self.time_selector.setCurrentIndex(1)
+        self.param_selector.setMinimumWidth(300)
         
         self.btn_forecast = QPushButton("Построить прогноз")
-        self.btn_forecast.setStyleSheet("background-color: #468faf; color: white;")
+        self.btn_forecast.setStyleSheet("""
+            background-color: #468faf; 
+            color: white;
+            padding: 8px 16px;
+            border-radius: 4px;
+        """)
         self.btn_forecast.clicked.connect(self.update_plots)
         
         control_layout.addWidget(self.param_label)
         control_layout.addWidget(self.param_selector)
-        control_layout.addWidget(self.time_label)
-        control_layout.addWidget(self.time_selector)
         control_layout.addWidget(self.btn_forecast)
         control_panel.setLayout(control_layout)
 
         # Контейнер для графиков
         self.plot_container = QWebEngineView()
         self.plot_container.setMinimumSize(1000, 800)
-
-        # Панель метрик
-        metrics_panel = QGroupBox("Метрики анализа")
-        metrics_layout = QGridLayout()
-        
-        self.metrics_labels = {
-            'data_points': QLabel("Точек данных:"),
-            'mean_value': QLabel("Среднее значение:"),
-            'trend': QLabel("Тренд:"),
-            'mae': QLabel("Средняя ошибка (MAE):"),
-            'aic': QLabel("Качество модели (AIC):")
-        }
-        
-        for i, (key, label) in enumerate(self.metrics_labels.items()):
-            metrics_layout.addWidget(label, i//2, i%2)
-        
-        metrics_panel.setLayout(metrics_layout)
-        metrics_panel.setStyleSheet("QGroupBox { font-weight: bold; }")
 
         # Кнопка возврата
         self.btn_back = QPushButton("← Назад к вводу")
@@ -800,153 +780,299 @@ class DynamicResultsPage(QWidget):
         main_layout.addWidget(self.header)
         main_layout.addWidget(control_panel)
         main_layout.addWidget(self.plot_container, 1)
-        main_layout.addWidget(metrics_panel)
         main_layout.addWidget(self.btn_back)
         
         self.setLayout(main_layout)
 
-    def update_params_list(self):
-        if self.parent.current_dynamic_data is not None:
-            params = [col for col in self.parent.current_dynamic_data.columns 
-                      if col not in ['id', 'timestamp', 'batch_id']]
-            self.param_selector.clear()
-            self.param_selector.addItems(params)
-
     def update_plots(self):
         param = self.param_selector.currentText()
-        time_group = self.time_selector.currentText()
         df = self.parent.current_dynamic_data
         
-        if df is None or param not in df.columns:
-            return
-        
         try:
-            # Преобразование временных меток
-            time_col = 'timestamp' if 'timestamp' in df.columns else 'date'
-            df[time_col] = pd.to_datetime(df[time_col])
-            df = df.set_index(time_col).sort_index()
-            
-            # Агрегация данных
-            freq_map = {'Час': 'H', 'День': 'D', 'Неделя': 'W-MON', 'Месяц': 'MS'}
-            resampled = df[param].resample(freq_map[time_group]).mean().ffill()
-            
-            # Создание графиков
-            fig = make_subplots(
-                rows=2, cols=1,
-                specs=[[{"type": "xy"}], [{"type": "xy"}]],
-                subplot_titles=[
-                    f"Динамика параметра {param} ({time_group})",
-                    "Контрольная карта Шухарта"
-                ],
-                vertical_spacing=0.15
-            )
-            
-            # Основной временной ряд
-            fig.add_trace(go.Scatter(
-                x=resampled.index,
-                y=resampled,
-                mode='lines+markers',
-                name='Измерения',
-                line=dict(color='#1a759f')),
-                row=1, col=1
-            )
-            
-            # Прогноз ARIMA
-            forecast_data = self.arima_predictor.predict(
-                df=df.reset_index(),
-                target_col=param,
-                time_col=time_group,
-                forecast_steps=5
-            )
-            
-            if forecast_data:
-                fig.add_trace(go.Scatter(
-                    x=forecast_data['forecast'].index,
-                    y=forecast_data['forecast'],
-                    mode='lines+markers',
-                    name='Прогноз ARIMA',
-                    line=dict(color='#e85d04', dash='dot')),
-                    row=1, col=1
-                )
+            if df is None:
+                raise ValueError("Данные не загружены")
                 
-                # Доверительный интервал
-                fig.add_trace(go.Scatter(
-                    x=forecast_data['conf_int'].index.tolist() + 
-                      forecast_data['conf_int'].index[::-1].tolist(),
-                    y=forecast_data['conf_int'][1].tolist() + 
-                      forecast_data['conf_int'][0][::-1].tolist(),
-                    fill='toself',
-                    fillcolor='rgba(232,93,4,0.2)',
-                    line=dict(color='rgba(255,255,255,0)'),
-                    name='95% ДИ',
-                    showlegend=False
-                ), row=1, col=1)
+            if param not in df.columns:
+                raise ValueError(f"Параметр '{param}' не найден в данных")
+
+            # Проверка и обработка временных меток
+            time_col = 'timestamp' if 'timestamp' in df.columns else 'date'
             
-            # Контрольная карта
-            mean = resampled.mean()
-            std = resampled.std()
+            # Преобразование и очистка временных данных
+            df_clean = DataProcessor._preprocess_time_data(df, time_col, param)
             
-            fig.add_trace(go.Scatter(
-                x=resampled.index,
-                y=resampled,
-                mode='lines+markers',
-                name='Значения',
-                line=dict(color='#1a759f')),
-                row=2, col=1
-            )
-            
-            # Границы контроля
-            for y, name, color in [
-                (mean + 3*std, 'ВКГ', '#d00000'),
-                (mean - 3*std, 'НКГ', '#d00000'),
-                (mean + 2*std, 'ПКГ', '#ffba08'),
-                (mean - 2*std, 'ПКГ', '#ffba08'),
-                (mean, 'Средняя', '#2a9d8f')
-            ]:
-                fig.add_hline(
-                    y=y,
-                    line=dict(color=color, dash='dash'),
-                    annotation_text=name,
-                    annotation_position="bottom right",
-                    row=2, col=1
-                )
-            
-            # Обновление оформления
-            fig.update_layout(
-                height=1000,
-                margin=dict(t=80, b=80),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02),
-                template='plotly_white'
-            )
-            
-            fig.update_xaxes(title_text="Дата", row=1, col=1)
-            fig.update_yaxes(title_text=param, row=1, col=1)
-            fig.update_xaxes(title_text="Дата", row=2, col=1)
-            fig.update_yaxes(title_text=param, row=2, col=1)
-            
-            self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
-            self._update_metrics(resampled, forecast_data)
-            
+            # Дальнейшая обработка данных
+            self._generate_plots(df_clean, param, time_col)
+
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Ошибка построения графиков: {str(e)}")
 
-    def _update_metrics(self, data, forecast):
-        metrics = {
-            'data_points': f"{len(data):,}".replace(",", " "),
-            'mean_value': f"{data.mean():.2f}",
-            'trend': f"{data.pct_change().mean()*100:.1f}%",
-            'mae': f"{self._calculate_mae(forecast):.2f}" if forecast else "N/A",
-            'aic': f"{forecast['model'].aic():.1f}" if forecast else "N/A"
-        }
+    def _generate_plots(self, df, param, time_col):
+        """Генерация графиков с обработанными данными"""
+        fig = make_subplots(
+            rows=2, cols=1,
+            subplot_titles=[
+                f"Динамика параметра {param}",
+                "Контрольные границы и прогноз"
+            ],
+            vertical_spacing=0.15
+        )
+    
+        # Основной график
+        fig.add_trace(go.Scatter(
+            x=df.index,
+            y=df[param],
+            mode='lines+markers',
+            name='Фактические значения',
+            line=dict(color='#1a759f')
+        ), row=1, col=1)
         
-        for key, label in self.metrics_labels.items():
-            label.setText(f"{label.text().split(':')[0]}: {metrics.get(key, 'N/A')}")
+        # Прогноз и доверительный интервал
+        forecast_data = self.arima_predictor.predict(
+            df=df.reset_index(),
+            target_col=param,
+            forecast_steps=30
+        )
+        
+        if forecast_data:
+            # Добавление прогноза
+            self._add_forecast(fig, forecast_data)
+        
+        # Контрольные границы
+        self._add_control_limits(fig)
+        
+        # Обновление оформления
+        fig.update_layout(
+            height=800,
+            template='plotly_white',
+            margin=dict(t=40, b=20),
+            legend=dict(orientation="h", y=1.02)
+        )
+        self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
 
-    def _calculate_mae(self, forecast):
-        if not forecast:
-            return 0
-        last_values = forecast['history'][-5:]
-        return np.mean(np.abs(last_values - forecast['forecast'][:len(last_values)]))
+    def _add_forecast(self, fig, forecast_data):
+        """Добавление прогноза и доверительного интервала с расширением временной оси"""
+        if forecast_data is None:
+            return
+            
+        try:
+            # Объединяем исторические данные и прогноз
+            full_index = self.df.index.union(forecast_data['forecast'].index)
+            
+            # Основной график с расширенной осью X
+            fig.add_trace(go.Scatter(
+                x=full_index,
+                y=np.concatenate([self.df[self.param].values, 
+                                [None]*len(forecast_data['forecast'])]),
+                mode='lines+markers',
+                name='Исторические данные',
+                line=dict(color='#1a759f'),
+                showlegend=False
+            ), row=1, col=1)
+
+            # Прогнозная часть
+            fig.add_trace(go.Scatter(
+                x=forecast_data['forecast'].index,
+                y=forecast_data['forecast'],
+                mode='lines+markers',
+                name='Прогноз',
+                line=dict(color='#e85d04', width=2),
+                marker=dict(size=6)
+            ), row=1, col=1)
+
+            # Доверительный интервал
+            fig.add_trace(go.Scatter(
+                x=forecast_data['conf_int'].index.tolist() + 
+                forecast_data['conf_int'].index[::-1].tolist(),
+                y=forecast_data['conf_int'][1].tolist() + 
+                forecast_data['conf_int'][0][::-1].tolist(),
+                fill='toself',
+                fillcolor='rgba(232,93,4,0.2)',
+                line=dict(color='rgba(255,255,255,0)'),
+                name='95% ДИ',
+                hoverinfo='skip'
+            ), row=1, col=1)
+
+        except Exception as e:
+            print(f"Ошибка визуализации прогноза: {str(e)}")
+
+    def _add_control_limits(self, fig):
+        """Обновленный метод для отображения границ"""
+        constraints = self.parent.dynamic_constraints.get(self.param, {})
+        
+        # Расчет границ
+        if constraints.get('type') == 'range':
+            lower = constraints.get('min', self.df[self.param].min())
+            upper = constraints.get('max', self.df[self.param].max())
+        else:
+            mean = self.df[self.param].mean()
+            std = self.df[self.param].std()
+            lower = mean - 3*std
+            upper = mean + 3*std
+
+        # Добавляем границы на оба сублота
+        for row in [1, 2]:
+            fig.add_hline(
+                y=upper,
+                line=dict(color='#d00000', dash='dash', width=1),
+                annotation_text="ВГ" if row == 2 else "",
+                row=row, col=1
+            )
+            fig.add_hline(
+                y=lower,
+                line=dict(color='#d00000', dash='dash', width=1),
+                annotation_text="НГ" if row == 2 else "",
+                row=row, col=1
+            )
+
+        # Выделяем только фактические нарушения
+        outliers = self.df[(self.df[self.param] < lower) | 
+                        (self.df[self.param] > upper)]
+        fig.add_trace(go.Scatter(
+            x=outliers.index,
+            y=outliers[self.param],
+            mode='markers',
+            marker=dict(color='red', size=8, symbol='x'),
+            name='Нарушения',
+            hoverinfo='x+y',
+            showlegend=False
+        ), row=2, col=1)
+
+    def _add_main_plot(self, fig, df, param, constraints):
+        # Прогноз ARIMA
+        forecast_data = self.arima_predictor.predict(
+            df=df.reset_index(),
+            target_col=param,
+            forecast_steps=self.forecast_steps
+        )
+        
+        # Исторические данные
+        fig.add_trace(go.Scatter(
+            x=df.index,
+            y=df[param],
+            mode='lines+markers',
+            name='Исторические данные',
+            line=dict(color='#1a759f')),
+            row=1, col=1
+        )
+        
+        # Прогноз
+        if forecast_data:
+            fig.add_trace(go.Scatter(
+                x=forecast_data['forecast'].index,
+                y=forecast_data['forecast'],
+                mode='lines+markers',
+                name='Прогноз',
+                line=dict(color='#e85d04', dash='dot')),
+                row=1, col=1
+            )
+            
+            # Доверительный интервал
+            fig.add_trace(go.Scatter(
+                x=forecast_data['conf_int'].index.tolist() + 
+                  forecast_data['conf_int'].index[::-1].tolist(),
+                y=forecast_data['conf_int'][1].tolist() + 
+                  forecast_data['conf_int'][0][::-1].tolist(),
+                fill='toself',
+                fillcolor='rgba(232,93,4,0.2)',
+                line=dict(color='rgba(255,255,255,0)'),
+                name='95% ДИ',
+                showlegend=True
+            ), row=1, col=1)
+            
+        # Границы допустимости
+        if constraints:
+            self._add_constraint_lines(fig, constraints, df.index, row=1)
+
+    def _add_control_chart(self, fig, df, param, constraints):
+        # Рассчитываем статистики
+        mean = df[param].mean()
+        std = df[param].std()
+        
+        # Границы по умолчанию
+        lower_bound = mean - 3*std
+        upper_bound = mean + 3*std
+        
+        # Если есть ограничения в настройках
+        if constraints.get('type') == 'range':
+            lower_bound = constraints.get('min', lower_bound)
+            upper_bound = constraints.get('max', upper_bound)
+        
+        # Визуализация отклонений
+        df['out_of_bounds'] = np.where(
+            (df[param] < lower_bound) | (df[param] > upper_bound), 1, 0)
+        
+        fig.add_trace(go.Scatter(
+            x=df.index,
+            y=df[param],
+            mode='lines+markers',
+            name='Значения',
+            line=dict(color='#1a759f')),
+            row=2, col=1
+        )
+        
+        # Границы
+        for bound, color, name in [
+            (upper_bound, '#d00000', 'Верхняя граница'),
+            (lower_bound, '#d00000', 'Нижняя граница')
+        ]:
+            fig.add_hline(
+                y=bound,
+                line=dict(color=color, dash='dash', width=2),
+                annotation_text=name,
+                annotation_position="bottom right",
+                row=2, col=1
+            )
+
+    def _add_constraint_lines(self, fig, constraints, dates, row):
+        """Добавляет линии ограничений на график"""
+        if constraints.get('type') == 'range':
+            fig.add_hline(
+                y=constraints['min'],
+                line=dict(color='green', dash='dot', width=2),
+                annotation_text="Минимум",
+                row=row, col=1
+            )
+            fig.add_hline(
+                y=constraints['max'],
+                line=dict(color='green', dash='dot', width=2),
+                annotation_text="Максимум",
+                row=row, col=1
+            )
+        elif constraints.get('type') == 'min':
+            fig.add_hline(
+                y=constraints['value'],
+                line=dict(color='green', dash='dot', width=2),
+                annotation_text="Минимальное значение",
+                row=row, col=1
+            )
+        elif constraints.get('type') == 'max':
+            fig.add_hline(
+                y=constraints['value'],
+                line=dict(color='green', dash='dot', width=2),
+                annotation_text="Максимальное значение",
+                row=row, col=1
+            )
+
+    def update_params_list(self):
+        """Обновляет список доступных параметров"""
+        if self.parent.current_dynamic_data is not None:
+            # Исключаем служебные колонки
+            excluded_columns = {'id', 'timestamp', 'date', 'batch_id'}
+            params = [col for col in self.parent.current_dynamic_data.columns 
+                    if col.lower() not in excluded_columns]
+            
+            # Сохраняем текущий выбор
+            current_selection = self.param_selector.currentText()
+            
+            self.param_selector.clear()
+            self.param_selector.addItems(params)
+            
+            # Восстанавливаем выбор если параметр все еще существует
+            if current_selection in params:
+                self.param_selector.setCurrentText(current_selection)
+            elif params:
+                self.param_selector.setCurrentIndex(0)
 
 class MainWindow(QMainWindow):
     def __init__(self):
