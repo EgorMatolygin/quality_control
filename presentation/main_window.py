@@ -313,7 +313,7 @@ class StaticResultsPage(QWidget):
         data = self.parent.current_static_data
 
         if data is not None:
-            params = [col for col in data.columns if col not in ['id', 'timestamp']]
+            params = [col for col in data.columns if col not in ['id', 'timestamp',"batch_id",'product_id','date']]
             self.param_selector.clear()
             self.param_selector.addItems(params)
             if params:
@@ -751,6 +751,7 @@ class DynamicResultsPage(QWidget):
         # Выбор партии
         self.batch_label = QLabel("Партия:")
         self.batch_selector = QComboBox()
+        self.batch_selector.addItem("Все партии")
         self.batch_selector.currentIndexChanged.connect(self.update_plots)
         
         # Кнопка прогноза
@@ -800,116 +801,180 @@ class DynamicResultsPage(QWidget):
         """Обновляет списки параметров и партий"""
         df = self.parent.current_dynamic_data
         if df is not None:
-            # Параметры
-            params = [col for col in df.columns if col not in ['id', 'timestamp', 'batch_id']]
+            # Обновление параметров
+            numeric_params = [
+                col for col in df.columns 
+                if pd.api.types.is_numeric_dtype(df[col])
+                and col.lower() not in ['id', 'timestamp', 'time', 'date', 'batch_id', 'batch','date']
+            ]
             self.param_selector.clear()
-            self.param_selector.addItems(params)
+            self.param_selector.addItems(numeric_params)
             
-            # Партии
-            batches = ['Все партии'] 
-            if 'batch_id' in df.columns:
-                batches += [str(b) for b in df['batch_id'].unique()]
+            # Обновление партий
             self.batch_selector.clear()
-            self.batch_selector.addItems(batches)
+            self.batch_selector.addItem("Все партии")
+            
+            # Поиск колонки с партиями
+            batch_col = next((col for col in df.columns if col.lower() in ['batch_id', 'batch']), None)
+            if batch_col:
+                batches = [str(b) for b in df[batch_col].unique()]
+                self.batch_selector.addItems(batches)
+
+    def get_param_constraints(self, param):
+        """Получает ограничения для параметра"""
+        constraints = self.parent.dynamic_constraints.get(param, {})
+        
+        # Возвращаем в формате: (min, max)
+        if constraints.get('type') == 'range':
+            return (constraints.get('min'), constraints.get('max'))
+        elif constraints.get('type') == 'min':
+            return (constraints.get('value'), None)
+        elif constraints.get('type') == 'max':
+            return (None, constraints.get('value'))
+        return (None, None)
 
     def filter_data(self):
         """Фильтрует данные по выбранной партии"""
         df = self.parent.current_dynamic_data
         if df is None:
+            QMessageBox.warning(self, "Ошибка", "Данные не загружены")
             return None
             
         batch = self.batch_selector.currentText()
-        if batch != 'Все партии' and 'batch_id' in df.columns:
-            return df[df['batch_id'] == batch]
+        if batch != "Все партии":
+            # Поиск колонки с партиями
+            batch_col = next((col for col in df.columns if col.lower() in ['batch_id', 'batch']), None)
+            if batch_col:
+                return df[df[batch_col].astype(str) == batch]
+            else:
+                QMessageBox.warning(self, "Ошибка", "Колонка с партиями не найдена")
+                return df
         return df
 
     def update_plots(self, index=None):
         """Обновляет график временных рядов"""
-        param = self.param_selector.currentText()
-        df = self.filter_data()
-        
-        if df is None or param not in df.columns or 'timestamp' not in df.columns:
-            return
+        try:
+            param = self.param_selector.currentText()
+            df = self.filter_data()
+            
+            if df is None or param not in df.columns:
+                return
 
-        # Подготовка данных
-        time_series = df.set_index('timestamp')[param].sort_index()
-        
-        # Создание графика
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=time_series.index,
-            y=time_series.values,
-            mode='lines+markers',
-            name='Исторические данные',
-            line=dict(color='#1f77b4')
-        ))
-        
-        # Настройка макета
-        fig.update_layout(
-            title=f'Динамика параметра {param}',
-            xaxis_title='Время',
-            yaxis_title=param,
-            hovermode='x unified',
-            margin=dict(l=50, r=50, t=60, b=50)
-        )
-        
-        self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
+            # Поиск временной колонки
+            time_col = next((col for col in df.columns if col.lower() in ['timestamp', 'time', 'date']), None)
+            if not time_col:
+                QMessageBox.warning(self, "Ошибка", "Временная колонка не найдена")
+                return
+
+            # Конвертация времени
+            df[time_col] = pd.to_datetime(df[time_col])
+            df = df.sort_values(time_col)
+
+            # Подготовка данных
+            time_series = df.groupby(time_col)[param].mean()
+            
+            # Создание графика
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=time_series.index,
+                y=time_series.values,
+                mode='lines+markers',
+                name='Исторические данные',
+                line=dict(color='#1f77b4'))
+            )
+            
+            # Настройка макета
+            fig.update_layout(
+                title=f'Динамика параметра {param}',
+                xaxis_title='Время',
+                yaxis_title=param,
+                hovermode='x unified',
+                margin=dict(l=50, r=50, t=60, b=50)
+            )
+            
+            self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
+            
+        except Exception as e:
+            QMessageBox.warning(self, "Ошибка", f"Ошибка построения графика: {str(e)}")
 
     def run_forecast(self):
-        """Запускает прогнозирование ARIMA"""
-        param = self.param_selector.currentText()
-        df = self.filter_data()
-        
-        if df is None or param not in df.columns or 'timestamp' not in df.columns:
-            return
-
-        # Прогнозирование
-        result = self.arima_predictor.predict(df, param)
-        if result is None:
-            return
+        """Запускает прогнозирование ARIMA с ограничениями"""
+        try:
+            param = self.param_selector.currentText()
+            df = self.filter_data()
             
-        # Обновление графика
-        fig = go.Figure()
-        
-        # Исторические данные
-        fig.add_trace(go.Scatter(
-            x=result['history'].index,
-            y=result['history'].values,
-            mode='lines+markers',
-            name='История',
-            line=dict(color='#1f77b4')
-        ))
-        
-        # Прогноз
-        fig.add_trace(go.Scatter(
-            x=result['forecast'].index,
-            y=result['forecast'].values,
-            mode='lines+markers',
-            name='Прогноз',
-            line=dict(color='#ff7f0e', dash='dot')
-        ))
-        
-        # Доверительный интервал
-        fig.add_trace(go.Scatter(
-            x=result['conf_int'].index.tolist() + result['conf_int'].index[::-1].tolist(),
-            y=result['conf_int'][0].tolist() + result['conf_int'][1][::-1].tolist(),
-            fill='toself',
-            fillcolor='rgba(255,127,14,0.2)',
-            line=dict(color='rgba(255,255,255,0)'),
-            name='Доверительный интервал'
-        ))
-        
-        # Настройка макета
-        fig.update_layout(
-            title=f'Прогноз для параметра {param}',
-            xaxis_title='Время',
-            yaxis_title=param,
-            hovermode='x unified',
-            margin=dict(l=50, r=50, t=60, b=50),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02)
-        )
-        
-        self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
+            if df is None or param not in df.columns:
+                return
+
+            # Получаем ограничения параметра
+            min_limit, max_limit = self.get_param_constraints(param)
+            
+            # Прогнозирование
+            result = self.arima_predictor.predict(df, param)
+            if result is None:
+                return
+
+            # Создаем график
+            fig = go.Figure()
+            
+            # Исторические данные
+            fig.add_trace(go.Scatter(
+                x=result['history'].index,
+                y=result['history'].values,
+                mode='lines+markers',
+                name='История',
+                line=dict(color='#1f77b4'))
+            )
+            
+            # Прогноз и доверительный интервал
+            fig.add_trace(go.Scatter(
+                x=result['forecast'].index,
+                y=result['forecast'].values,
+                mode='lines+markers',
+                name='Прогноз',
+                line=dict(color='#ff7f0e', dash='dot'))
+            )
+            
+            fig.add_trace(go.Scatter(
+                x=result['conf_int'].index.tolist() + result['conf_int'].index[::-1].tolist(),
+                y=result['conf_int'][0].tolist() + result['conf_int'][1][::-1].tolist(),
+                fill='toself',
+                fillcolor='rgba(255,127,14,0.2)',
+                line=dict(color='rgba(255,255,255,0)'),
+                name='95% ДИ'
+            ))
+            
+            # Добавляем линии ограничений
+            if min_limit is not None:
+                fig.add_hline(
+                    y=min_limit,
+                    line=dict(color='red', width=2, dash='dash'),
+                    annotation_text=f"Min: {min_limit}",
+                    annotation_position="bottom right"
+                )
+            
+            if max_limit is not None:
+                fig.add_hline(
+                    y=max_limit,
+                    line=dict(color='red', width=2, dash='dash'),
+                    annotation_text=f"Max: {max_limit}",
+                    annotation_position="top right"
+                )
+            
+            # Настройка макета
+            fig.update_layout(
+                title=f'Прогноз {param} с ограничениями',
+                xaxis_title='Дата',
+                yaxis_title=param,
+                hovermode='x unified',
+                margin=dict(l=50, r=50, t=80, b=50),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02)
+            )
+            
+            self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
+
+        except Exception as e:
+            QMessageBox.warning(self, "Ошибка", f"Ошибка прогноза: {str(e)}")
 
 class MainWindow(QMainWindow):
     def __init__(self):
