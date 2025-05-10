@@ -718,410 +718,198 @@ class DynamicResultsPage(QWidget):
         super().__init__()
         self.parent = parent
         self.current_param = None
-        self.df = None
-        self.forecast_steps = 30
+        self.current_batch = None
         self.arima_predictor = ARIMAPredictor(self)
         self.init_ui()
+        self.setStyleSheet("background-color: #f0f0f0;")
 
     def init_ui(self):
         main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(20, 15, 20, 15)
-        main_layout.setSpacing(15)
         
         # Заголовок
-        self.header = QLabel("Динамический анализ параметров качества", self)
+        self.header = QLabel("Результаты динамического анализа", self)
         self.header.setFont(QFont('Arial', 18, QFont.Bold))
         self.header.setAlignment(Qt.AlignCenter)
         self.header.setStyleSheet("""
-            background-color: #2c7da0;
+            background-color: #4A90E2;
             color: white;
             padding: 15px;
             border-radius: 8px;
-            margin-bottom: 20px;
+            margin: 10px 0;
         """)
-        
+        main_layout.addWidget(self.header)
+
         # Панель управления
         control_panel = QWidget()
-        control_panel.setStyleSheet("background-color: #f8f9fa; border-radius: 6px; padding: 12px;")
-        control_layout = QHBoxLayout()
-        control_layout.setContentsMargins(10, 5, 10, 5)
-        control_layout.setSpacing(15)
-
-        # Элементы управления
+        control_layout = QGridLayout()
+        
+        # Выбор параметра
         self.param_label = QLabel("Параметр:")
-        self.param_label.setFont(QFont('Arial', 10))
-        
         self.param_selector = QComboBox()
-        self.param_selector.setMinimumWidth(250)
-        self.param_selector.setFont(QFont('Arial', 10))
-        self.param_selector.setStyleSheet("""
-            QComboBox {
-                padding: 6px;
-                border: 1px solid #ced4da;
-                border-radius: 4px;
-            }
-            QComboBox:hover { border-color: #adb5bd; }
-        """)
+        self.param_selector.currentIndexChanged.connect(self.update_plots)
         
+        # Выбор партии
         self.batch_label = QLabel("Партия:")
-        self.batch_label.setFont(QFont('Arial', 10))
-        
         self.batch_selector = QComboBox()
-        self.batch_selector.setMinimumWidth(200)
-        self.batch_selector.setFont(QFont('Arial', 10))
-        self.batch_selector.setStyleSheet("""
-            QComboBox {
-                padding: 6px;
-                border: 1px solid #ced4da;
-                border-radius: 4px;
-            }
-            QComboBox:hover { border-color: #adb5bd; }
-        """)
+        self.batch_selector.currentIndexChanged.connect(self.update_plots)
         
+        # Кнопка прогноза
         self.btn_forecast = QPushButton("Построить прогноз")
-        self.btn_forecast.setFont(QFont('Arial', 10, QFont.Bold))
+        self.btn_forecast.clicked.connect(self.run_forecast)
         self.btn_forecast.setStyleSheet("""
             QPushButton {
-                background-color: #4a9dec;
-                color: white;
-                padding: 8px 20px;
-                border-radius: 5px;
-                min-width: 120px;
-            }
-            QPushButton:hover { background-color: #3d8bd4; }
-            QPushButton:pressed { background-color: #357ebd; }
-        """)
-        self.btn_forecast.clicked.connect(self.update_plots)
-
-        # Сборка панели управления
-        control_layout.addWidget(self.param_label)
-        control_layout.addWidget(self.param_selector)
-        control_layout.addWidget(self.batch_label)
-        control_layout.addWidget(self.batch_selector)
-        control_layout.addStretch(1)
-        control_layout.addWidget(self.btn_forecast)
-        control_panel.setLayout(control_layout)
-
-        # Контейнер для графиков
-        self.plot_container = QWebEngineView()
-        self.plot_container.setMinimumSize(1024, 720)
-        self.plot_container.setStyleSheet("""
-            background-color: white;
-            border-radius: 8px;
-            border: 1px solid #dee2e6;
-        """)
-
-        # Кнопка возврата
-        self.btn_back = QPushButton("← Назад к вводу данных")
-        self.btn_back.setFont(QFont('Arial', 10))
-        self.btn_back.setStyleSheet("""
-            QPushButton {
-                background-color: #6c757d;
+                background-color: #4CAF50;
                 color: white;
                 padding: 8px 16px;
-                border-radius: 5px;
+                border-radius: 4px;
             }
-            QPushButton:hover { background-color: #5a6268; }
-            QPushButton:pressed { background-color: #484e53; }
+            QPushButton:hover { background-color: #45a049; }
+        """)
+
+        control_layout.addWidget(self.param_label, 0, 0)
+        control_layout.addWidget(self.param_selector, 0, 1)
+        control_layout.addWidget(self.batch_label, 1, 0)
+        control_layout.addWidget(self.batch_selector, 1, 1)
+        control_layout.addWidget(self.btn_forecast, 0, 2, 2, 1)
+        control_panel.setLayout(control_layout)
+        main_layout.addWidget(control_panel)
+
+        # График
+        self.plot_container = QWebEngineView()
+        self.plot_container.setMinimumSize(800, 500)
+        main_layout.addWidget(self.plot_container)
+
+        # Кнопка возврата
+        self.btn_back = QPushButton("← Назад к вводу")
+        self.btn_back.setStyleSheet("""
+            QPushButton {
+                background-color: #FF6B6B;
+                color: white;
+                padding: 10px 20px;
+                border-radius: 5px;
+                font-size: 14px;
+            }
+            QPushButton:hover { background-color: #FF5252; }
         """)
         self.btn_back.clicked.connect(self.parent.show_input)
+        main_layout.addWidget(self.btn_back, alignment=Qt.AlignRight)
 
-        # Сборка основного интерфейса
-        main_layout.addWidget(self.header)
-        main_layout.addWidget(control_panel)
-        main_layout.addWidget(self.plot_container, 1)
-        main_layout.addWidget(self.btn_back, 0, Qt.AlignRight)
-        
         self.setLayout(main_layout)
 
-    def update_plots(self):
-        try:
-            self.current_param = self.param_selector.currentText()
-            self.df = self.parent.current_dynamic_data.copy()
-            
-            if self.df is None:
-                raise ValueError("Данные не загружены")
-                
-            if self.current_param not in self.df.columns:
-                raise ValueError(f"Параметр '{self.current_param}' не найден в данных")
-
-            # Обработка временных данных
-            time_col = 'timestamp' if 'timestamp' in self.df.columns else 'date'
-            self.df[time_col] = pd.to_datetime(self.df[time_col])
-            self.df.set_index(time_col, inplace=True)
-            
-            # Построение графиков
-            self._generate_plots()
-
-        except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Ошибка построения графиков: {str(e)}")
-
-    def _generate_plots(self):
-        # Добавляем заголовок с информацией о партии
-        selected_batch = self.batch_selector.currentText()
-        subplot_titles = [
-            f"Динамика параметра {self.current_param} ({selected_batch})",
-            "Анализ контрольных границ"
-        ]
-        
-        fig = make_subplots(
-            rows=2, cols=1,
-            subplot_titles=subplot_titles,
-            vertical_spacing=0.15
-        )
-        
-        dtype = 'numeric' if pd.api.types.is_numeric_dtype(self.df[self.current_param]) else 'categorical'
-        
-        if dtype == 'numeric':
-            self._generate_numeric_plots(fig)
-        else:
-            self._generate_categorical_plots(fig)
-        
-        # Общее оформление
-        fig.update_layout(
-            height=900,
-            template='plotly_white',
-            margin=dict(t=60, b=20),
-            legend=dict(orientation="h", y=1.1)
-        )
-        self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
-
-    def _generate_numeric_plots(self, fig):
-        # Фильтрация данных по выбранной партии (если столбец существует)
-        selected_batch = self.batch_selector.currentText()
-        
-        # Проверяем наличие столбца batch_id перед фильтрацией
-        if 'batch_id' in self.df.columns and selected_batch != "Все партии":
-            self.df = self.df[self.df['batch_id'] == selected_batch]
-        
-        # Основной график временного ряда
-        if 'batch_id' in self.df.columns and selected_batch == "Все партии":
-            # График с разбивкой по партиям
-            colors = px.colors.qualitative.Plotly
-            batches = self.df['batch_id'].unique()
-            for i, batch in enumerate(batches):
-                batch_data = self.df[self.df['batch_id'] == batch]
-                fig.add_trace(go.Scatter(
-                    x=batch_data.index,
-                    y=batch_data[self.current_param],
-                    mode='lines+markers',
-                    name=f'Партия {batch}',
-                    line=dict(color=colors[i % len(colors)], width=2),
-                    marker=dict(size=6, symbol='circle-open', line=dict(width=1)),
-                    hovertemplate='<b>Дата</b>: %{x}<br><b>Значение</b>: %{y:.2f}<extra></extra>'
-                ), row=1, col=1)
-        else:
-            # Единый график для всех данных
-            fig.add_trace(go.Scatter(
-                x=self.df.index,
-                y=self.df[self.current_param],
-                mode='lines+markers',
-                name='Фактические значения',
-                line=dict(color='#1a759f', width=2),
-                marker=dict(
-                    size=6,
-                    color='#2a9d8f',
-                    line=dict(width=1, color='DarkSlateGrey')
-                ),
-                hovertemplate='<b>Дата</b>: %{x}<br><b>Значение</b>: %{y:.2f}<extra></extra>'
-            ), row=1, col=1)
-
-        # Прогнозирование только для конкретной партии или если нет batch_id
-        if ('batch_id' not in self.df.columns) or (selected_batch != "Все партии"):
-            if not self.df.empty:
-                try:
-                    forecast_data = self.arima_predictor.predict(
-                        df=self.df.reset_index(),
-                        target_col=self.current_param,
-                        forecast_steps=self.forecast_steps
-                    )
-                    if forecast_data:
-                        self._add_forecast(fig, forecast_data)
-                except Exception as e:
-                    print(f"Ошибка прогнозирования: {str(e)}")
-
-        # Добавление контрольных границ
-        self._add_control_limits(fig)
-
-        # Анализ по партиям (только если столбец существует)
-        if 'batch_id' in self.df.columns:
-            self._add_batch_analysis(fig)
-
-        # Настройка осей
-        fig.update_yaxes(
-            title_text=f"Значение параметра ({(self.current_param)})", 
-            row=1, col=1
-        )
-        fig.update_xaxes(title_text="Дата измерений", row=1, col=1)
-        fig.update_xaxes(title_text="Дата измерений", row=2, col=1)
-        fig.update_yaxes(
-            title_text="Отклонения и контрольные границы", 
-            row=2, col=1
-        )
-
-        # Добавление общей информации
-        if not self.df.empty:
-            date_range = f"{self.df.index.min().strftime('%d.%m.%Y')} - {self.df.index.max().strftime('%d.%m.%Y')}"
-            total_points = len(self.df)
-            fig.add_annotation(
-                xref="paper", yref="paper",
-                x=0.02, y=1.15,
-                text=f"Всего измерений: {total_points} | Период: {date_range}",
-                showarrow=False,
-                font=dict(size=10)
-            )
-
-    def _add_batch_analysis(self, fig):
-        """Добавляет анализ по партиям"""
-        if 'batch_id' in self.df.columns:
-            batches = self.df['batch_id'].unique()
-            colors = px.colors.qualitative.Plotly
-            
-            for i, batch in enumerate(batches):
-                batch_data = self.df[self.df['batch_id'] == batch]
-                fig.add_trace(go.Scatter(
-                    x=batch_data.index,
-                    y=batch_data[self.current_param],
-                    mode='markers',
-                    marker=dict(color=colors[i % len(colors)], size=8,
-                    name=f'Партия {batch}',
-                    showlegend=False)
-                ), row=2, col=1)
-
-    def _add_main_timeseries(self, fig):
-        """Добавляет основной график временного ряда"""
-        fig.add_trace(go.Scatter(
-            x=self.df.index,
-            y=self.df[self.current_param],
-            mode='lines+markers',
-            name='Фактические значения',
-            line=dict(color='#1a759f', width=2)),
-            row=1, col=1
-        )
-
-    def _add_forecast(self, fig, forecast_data):
-        """Стилизованное отображение прогноза"""
-        fig.add_trace(go.Scatter(
-            x=forecast_data['forecast'].index,
-            y=forecast_data['forecast'],
-            mode='lines+markers',
-            name='Прогноз ARIMA',
-            line=dict(color='#FF6B6B', width=3, dash='dot'),
-            marker=dict(symbol='diamond', size=8)),
-            row=1, col=1
-        )
-        
-        # Доверительный интервал
-        fig.add_trace(go.Scatter(
-            x=forecast_data['conf_int'].index.tolist() + forecast_data['conf_int'].index[::-1].tolist(),
-            y=forecast_data['conf_int'][1].tolist() + forecast_data['conf_int'][0][::-1].tolist(),
-            fill='toself',
-            fillcolor='rgba(255,107,107,0.2)',
-            line=dict(color='rgba(255,255,255,0)'),
-            name='95% Доверительный интервал',
-            hoverinfo='skip'
-        ), row=1, col=1)
-
-        # Вертикальная линия разделения истории и прогноза
-        last_history_date = self.df.index[-1]
-        fig.add_vline(
-            x=last_history_date,
-            line=dict(color='#4ECDC4', width=2, dash='dash'),
-            annotation_text="Начало прогноза",
-            row=1, col=1
-        )
-
-    def _add_control_limits(self, fig):
-        """Добавляет контрольные границы и анализ аномалий"""
-        constraints = self.parent.dynamic_constraints.get(self.current_param, {})
-        
-        # Рассчитываем границы
-        if constraints.get('type') == 'range':
-            lower = constraints.get('min')
-            upper = constraints.get('max')
-        else:
-            mean = self.df[self.current_param].mean()
-            std = self.df[self.current_param].std()
-            lower = mean - 3*std
-            upper = mean + 3*std
-
-        # Линии границ
-        for row in [1, 2]:
-            fig.add_hline(
-                y=upper,
-                line=dict(color='#d00000', dash='dash', width=1),
-                annotation_text="ВГ" if row == 2 else "",
-                row=row, col=1
-            )
-            fig.add_hline(
-                y=lower,
-                line=dict(color='#d00000', dash='dash', width=1),
-                annotation_text="НГ" if row == 2 else "",
-                row=row, col=1
-            )
-
-        # Аномальные значения
-        outliers = self.df[(self.df[self.current_param] < lower) | 
-                         (self.df[self.current_param] > upper)]
-        fig.add_trace(go.Scatter(
-            x=outliers.index,
-            y=outliers[self.current_param],
-            mode='markers',
-            marker=dict(color='red', size=8, symbol='x'),
-            name='Нарушения'),
-            row=2, col=1
-        )
-
-    def _generate_categorical_plots(self, fig):
-        """Генерирует графики для категориальных данных"""
-        # Агрегируем данные по дням
-        df_resampled = self.df.resample('D')[self.current_param].value_counts().unstack().fillna(0)
-        
-        # Stacked bar chart для категорий
-        for category in df_resampled.columns:
-            fig.add_trace(go.Bar(
-                x=df_resampled.index,
-                y=df_resampled[category],
-                name=category,
-                hoverinfo='y+name',
-                marker=dict(line=dict(width=0))
-            ), row=1, col=1)
-        
-        # Анализ контрольных границ
-        constraints = self.parent.dynamic_constraints.get(self.current_param, {})
-        if 'allowed' in constraints:
-            invalid = self.df[~self.df[self.current_param].isin(constraints['allowed'])]
-            fig.add_trace(go.Scatter(
-                x=invalid.index,
-                y=invalid[self.current_param],
-                mode='markers',
-                marker=dict(color='red', size=8, symbol='x'),
-                name='Недопустимые значения',
-                hovertext=invalid[self.current_param]
-            ), row=2, col=1)
-        
-        # Оформление
-        fig.update_layout(barmode='stack', row=1, col=1)
-        fig.update_yaxes(title_text="Количество", row=1, col=1)
-        fig.update_xaxes(title_text="Дата", row=1, col=1)
-        fig.update_xaxes(title_text="Дата", row=2, col=1)
-
     def update_params_list(self):
-        # Обновляем список параметров и партий
-        if self.parent.current_dynamic_data is not None:
-            # Обновление параметров
-            params = [col for col in self.parent.current_dynamic_data.columns 
-                    if col.lower() not in {'id', 'timestamp', 'date', 'batch_id'}]
+        """Обновляет списки параметров и партий"""
+        df = self.parent.current_dynamic_data
+        if df is not None:
+            # Параметры
+            params = [col for col in df.columns if col not in ['id', 'timestamp', 'batch_id']]
             self.param_selector.clear()
             self.param_selector.addItems(params)
             
-            # Обновление списка партий
-            if 'batch_id' in self.parent.current_dynamic_data.columns:
-                batches = ["Все партии"] + self.parent.current_dynamic_data['batch_id'].unique().tolist()
-            else:
-                batches = ["Все партии"]  # Если столбца нет, показываем только общий вариант
+            # Партии
+            batches = ['Все партии'] 
+            if 'batch_id' in df.columns:
+                batches += [str(b) for b in df['batch_id'].unique()]
             self.batch_selector.clear()
-            self.batch_selector.addItems(map(str, batches))
+            self.batch_selector.addItems(batches)
+
+    def filter_data(self):
+        """Фильтрует данные по выбранной партии"""
+        df = self.parent.current_dynamic_data
+        if df is None:
+            return None
+            
+        batch = self.batch_selector.currentText()
+        if batch != 'Все партии' and 'batch_id' in df.columns:
+            return df[df['batch_id'] == batch]
+        return df
+
+    def update_plots(self, index=None):
+        """Обновляет график временных рядов"""
+        param = self.param_selector.currentText()
+        df = self.filter_data()
+        
+        if df is None or param not in df.columns or 'timestamp' not in df.columns:
+            return
+
+        # Подготовка данных
+        time_series = df.set_index('timestamp')[param].sort_index()
+        
+        # Создание графика
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=time_series.index,
+            y=time_series.values,
+            mode='lines+markers',
+            name='Исторические данные',
+            line=dict(color='#1f77b4')
+        ))
+        
+        # Настройка макета
+        fig.update_layout(
+            title=f'Динамика параметра {param}',
+            xaxis_title='Время',
+            yaxis_title=param,
+            hovermode='x unified',
+            margin=dict(l=50, r=50, t=60, b=50)
+        )
+        
+        self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
+
+    def run_forecast(self):
+        """Запускает прогнозирование ARIMA"""
+        param = self.param_selector.currentText()
+        df = self.filter_data()
+        
+        if df is None or param not in df.columns or 'timestamp' not in df.columns:
+            return
+
+        # Прогнозирование
+        result = self.arima_predictor.predict(df, param)
+        if result is None:
+            return
+            
+        # Обновление графика
+        fig = go.Figure()
+        
+        # Исторические данные
+        fig.add_trace(go.Scatter(
+            x=result['history'].index,
+            y=result['history'].values,
+            mode='lines+markers',
+            name='История',
+            line=dict(color='#1f77b4')
+        ))
+        
+        # Прогноз
+        fig.add_trace(go.Scatter(
+            x=result['forecast'].index,
+            y=result['forecast'].values,
+            mode='lines+markers',
+            name='Прогноз',
+            line=dict(color='#ff7f0e', dash='dot')
+        ))
+        
+        # Доверительный интервал
+        fig.add_trace(go.Scatter(
+            x=result['conf_int'].index.tolist() + result['conf_int'].index[::-1].tolist(),
+            y=result['conf_int'][0].tolist() + result['conf_int'][1][::-1].tolist(),
+            fill='toself',
+            fillcolor='rgba(255,127,14,0.2)',
+            line=dict(color='rgba(255,255,255,0)'),
+            name='Доверительный интервал'
+        ))
+        
+        # Настройка макета
+        fig.update_layout(
+            title=f'Прогноз для параметра {param}',
+            xaxis_title='Время',
+            yaxis_title=param,
+            hovermode='x unified',
+            margin=dict(l=50, r=50, t=60, b=50),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02)
+        )
+        
+        self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
 
 class MainWindow(QMainWindow):
     def __init__(self):
