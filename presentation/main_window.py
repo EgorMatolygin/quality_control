@@ -227,13 +227,14 @@ class StaticResultsPage(QWidget):
         self.parent = parent
         self.current_param = None
         self.stats_cache = {}
+        self.params = []  # Список доступных параметров
         self.init_ui()
         self.setStyleSheet("background-color: #f0f0f0;")
 
     def init_ui(self):
         main_layout = QVBoxLayout()
         
-        # Заголовок с фиксированным размером
+        # Заголовок
         self.header = QLabel("Результаты статического анализа", self)
         self.header.setFont(QFont('Arial', 18, QFont.Bold))
         self.header.setAlignment(Qt.AlignCenter)
@@ -246,33 +247,21 @@ class StaticResultsPage(QWidget):
         """)
         main_layout.addWidget(self.header)
 
-        # Панель управления с фиксированной высотой
-        control_panel = QWidget()
-        control_layout = QHBoxLayout()
-        
-        self.param_label = QLabel("Выберите параметр:")
-        self.param_label.setFont(QFont('Arial', 12))
-        
-        self.param_selector = QComboBox()
-        self.param_selector.setFont(QFont('Arial', 12))
-        # self.param_selector.setMinimumHeight(50)
-        self.param_selector.currentIndexChanged.connect(self.update_plots)
-        
-        control_layout.addWidget(self.param_label)
-        control_layout.addWidget(self.param_selector)
-        control_panel.setLayout(control_layout)
-        main_layout.addWidget(control_panel)
+        # Вкладки с параметрами
+        self.param_tabs = QTabWidget()
+        self.param_tabs.currentChanged.connect(self.on_tab_changed)
+        main_layout.addWidget(self.param_tabs)
 
-        # Основная область с графиком и статистикой
+        # Область контента
         content_widget = QWidget()
         content_layout = QHBoxLayout()
         
-        # Контейнер для графика (70% ширины)
+        # Контейнер для графика
         self.plot_container = QWebEngineView()
         self.plot_container.setMinimumSize(800, 500)
         content_layout.addWidget(self.plot_container, 70)
 
-        # Панель статистики (30% ширины)
+        # Панель статистики
         stats_panel = QWidget()
         stats_layout = QVBoxLayout()
         
@@ -308,35 +297,45 @@ class StaticResultsPage(QWidget):
         self.setLayout(main_layout)
 
     def update_params_list(self):
-        """Обновляет список параметров на странице результатов"""
-
+        """Обновляет список параметров во вкладках"""
         data = self.parent.current_static_data
+        self.param_tabs.clear()
+        self.params = []
 
         if data is not None:
-            params = [col for col in data.columns if col not in ['id', 'timestamp',"batch_id",'product_id','date']]
-            self.param_selector.clear()
-            self.param_selector.addItems(params)
-            if params:
-                self.current_param = params[0]
-        else:
-            self.param_selector.clear()
+            self.params = [col for col in data.columns if col not in ['id', 'timestamp', "batch_id", 'product_id', 'date']]
+            
+            for param in self.params:
+                tab = QWidget()
+                tab.setObjectName(param)
+                self.param_tabs.addTab(tab, param)
+            
+            if self.params:
+                self.param_tabs.setCurrentIndex(0)
+                self.current_param = self.params[0]
+                self.update_plots()
 
-    def update_plots(self, index):
-        param = self.param_selector.currentText()
+    def on_tab_changed(self, index):
+        """Обработчик смены вкладки"""
+        if 0 <= index < len(self.params):
+            self.current_param = self.params[index]
+            self.update_plots()
 
-        if (not param or 
-            self.parent.current_static_data is None or 
-            self.parent.current_static_data.empty):
+    def update_plots(self):
+        """Обновляет графики для текущего параметра"""
+        if not self.current_param:
             return
-        
-        df = self.parent.current_static_data
-        constraints = self.parent.static_constraints.get(param, {})
-        dtype = 'numeric'
 
-        if pd.api.types.is_string_dtype(df[param]) or pd.api.types.is_categorical_dtype(df[param]):
-            dtype = 'categorical'
-            unique_values = df[param].nunique()
-        
+        param = self.current_param
+        df = self.parent.current_static_data
+
+        if df is None or param not in df.columns:
+            return
+
+        constraints = self.parent.static_constraints.get(param, {})
+        dtype = 'numeric' if pd.api.types.is_numeric_dtype(df[param]) else 'categorical'
+
+        # Остальной код визуализации остается без изменений
         specs = [[{"type": "xy"}, {"type": "xy"}],
                 [{"type": "xy"}, {"type": "xy"}]] if dtype == 'numeric' else \
                [[{"type": "xy"}, {"type": "domain"}],
@@ -351,13 +350,14 @@ class StaticResultsPage(QWidget):
         if dtype == 'numeric':
             self._add_numeric_visualizations(fig, df, param, constraints)
         else:
+            unique_values = df[param].nunique()
             self._add_categorical_visualizations(fig, df, param, constraints, unique_values)
         
         num_batches = len(df['batch_id'].unique()) if 'batch_id' in df.columns else 1
         subplot_height = max(400, 50 * num_batches)
         
         fig.update_layout(
-            height=subplot_height*2,  # Для 2 рядов
+            height=subplot_height*2,
             margin=dict(l=50, r=50, t=80, b=50),
             hovermode='x unified'
         )
@@ -1061,7 +1061,7 @@ class MainWindow(QMainWindow):
                 self.input_page.process_data("static")
                 data = self.current_static_data
                 page.update_params_list()
-                page.update_plots(0)
+                page.update_plots()
                 self.stacked_widget.setCurrentIndex(1)
             elif analysis_type == 'dynamic':
                 page = self.dynamic_results_page
