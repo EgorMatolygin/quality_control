@@ -2,7 +2,7 @@
 from PyQt5.QtWidgets import (QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QFileDialog, QMessageBox, QLabel, QGroupBox, QFormLayout, QComboBox, QLineEdit, 
                             QGridLayout, QScrollArea, QCheckBox, QTableWidget,QTableWidgetItem, QStackedWidget, QHeaderView, QSizePolicy)
-from PyQt5.QtGui import QIcon, QFont
+from PyQt5.QtGui import QIcon, QFont, QFontMetrics
 from PyQt5.QtCore import Qt
 from presentation.widgets.table_widget import TableWidget
 from presentation.widgets.plot_widget import PlotWidget
@@ -232,7 +232,9 @@ class StaticResultsPage(QWidget):
         self.setStyleSheet("background-color: #f0f0f0;")
 
     def init_ui(self):
-        main_layout = QVBoxLayout()
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(12, 12, 12, 12)  # Общие отступы
+        main_layout.setSpacing(12)
         
         # Заголовок
         self.header = QLabel("Результаты статического анализа", self)
@@ -250,22 +252,90 @@ class StaticResultsPage(QWidget):
         # Вкладки с параметрами
         self.param_tabs = QTabWidget()
         self.param_tabs.currentChanged.connect(self.on_tab_changed)
+        self.param_tabs.setDocumentMode(True) 
+        self.param_tabs.setStyleSheet("""
+            QTabWidget::pane {
+                border: 1px solid #d0d0d0;
+                border-radius: 6px;
+                background: white;
+                margin-top: 4px;
+            }
+            
+            QTabBar::tab {
+                background: #e8e8e8;
+                color: #505050;
+                border: 1px solid #d0d0d0;
+                border-bottom: none;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                padding: 8px 16px;
+                margin-right: 4px;
+                font-size: 14px;
+            }
+            
+            QTabBar::tab:selected {
+                background: white;
+                color: #2c3e50;
+                border-color: #d0d0d0;
+                font-weight: bold;
+            }
+            
+            QTabBar::tab:hover {
+                background: #f0f0f0;
+            }
+            
+            QTabBar::tab:!selected {
+                margin-top: 2px;
+            }
+            
+            QTabBar QToolButton {
+                background: #f0f0f0;
+                border: 1px solid #d0d0d0;
+                border-radius: 4px;
+            }
+            QTabWidget::pane {
+                border-top: 2px solid #4A90E2; 
+                margin: 0;  
+                padding: 12px;  
+            }
+        """)
         main_layout.addWidget(self.param_tabs)
 
-        # Область контента
+        # Основной контент
         content_widget = QWidget()
-        content_layout = QHBoxLayout()
-        
+        content_layout = QHBoxLayout(content_widget)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(15)
+            
         # Контейнер для графика
+        plot_wrapper = QWidget()
+        plot_wrapper.setLayout(QVBoxLayout())
+        plot_wrapper.layout().setContentsMargins(0, 0, 0, 0)
+        
         self.plot_container = QWebEngineView()
-        self.plot_container.setMinimumSize(800, 500)
-        content_layout.addWidget(self.plot_container, 70)
+        self.plot_container.setSizePolicy(
+            QSizePolicy.Expanding, 
+            QSizePolicy.Expanding
+        )
+        plot_wrapper.layout().addWidget(self.plot_container)
 
         # Панель статистики
         stats_panel = QWidget()
-        stats_layout = QVBoxLayout()
+        stats_panel.setSizePolicy(
+            QSizePolicy.Fixed,  # Фиксированная ширина
+            QSizePolicy.Expanding
+        )
+        stats_panel.setMinimumWidth(320)  # Оптимальная ширина для таблицы
+        stats_panel.setMaximumWidth(400)
+        
+        stats_layout = QVBoxLayout(stats_panel)
+        stats_layout.setContentsMargins(0, 0, 0, 0)
         
         self.stats_table = QTableWidget()
+        self.stats_table.setSizePolicy(
+            QSizePolicy.Expanding,
+            QSizePolicy.Expanding
+        )
         self.stats_table.setColumnCount(2)
         self.stats_table.setHorizontalHeaderLabels(["Метрика", "Значение"])
         self.stats_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
@@ -274,22 +344,31 @@ class StaticResultsPage(QWidget):
         stats_layout.addWidget(QLabel("Статистические показатели:"))
         stats_layout.addWidget(self.stats_table)
         stats_panel.setLayout(stats_layout)
-        content_layout.addWidget(stats_panel, 30)
+        
+        content_layout.addWidget(plot_wrapper, 1)  # Растягиваемый график
+        content_layout.addWidget(stats_panel)      # Фиксированная таблица
 
         content_widget.setLayout(content_layout)
-        main_layout.addWidget(content_widget)
+        main_layout.addWidget(content_widget, 1)
 
-        # Кнопка возврата
+        # Кнопка Назад
         self.btn_back = QPushButton("← Назад к вводу")
-        self.btn_back.setStyleSheet("""
-            QPushButton {
-                background-color: #FF6B6B;
-                color: white;
-                padding: 10px 20px;
-                border-radius: 5px;
-                font-size: 14px;
+        main_layout.addWidget(self.btn_back, alignment=Qt.AlignRight)
+
+        # Общие стили
+        self.setStyleSheet("""
+            QWidget {
+                background: #f0f0f0;
             }
-            QPushButton:hover { background-color: #FF5252; }
+            QTableWidget {
+                background: white;
+                border-radius: 6px;
+                padding: 8px;
+            }
+            QWebEngineView {
+                background: white;
+                border-radius: 6px;
+            }
         """)
         self.btn_back.clicked.connect(self.parent.show_input)
         main_layout.addWidget(self.btn_back, alignment=Qt.AlignRight)
@@ -311,9 +390,53 @@ class StaticResultsPage(QWidget):
                 self.param_tabs.addTab(tab, param)
             
             if self.params:
+                # Настройка размеров вкладок после их создания
+                self.adjust_tab_sizes()
                 self.param_tabs.setCurrentIndex(0)
                 self.current_param = self.params[0]
                 self.update_plots()
+
+    def adjust_tab_sizes(self):
+        """Настраивает размеры вкладок по ширине текста с учетом совместимости"""
+        tab_bar = self.param_tabs.tabBar()
+        metrics = QFontMetrics(tab_bar.font())
+        padding = 25  # Суммарный отступ
+        
+        # Создаем стиль динамически для каждой вкладки
+        style_sheet = ""
+        for i in range(tab_bar.count()):
+            text = tab_bar.tabText(i)
+            text_width = metrics.horizontalAdvance(text) + padding
+            style_sheet += f"""
+                QTabBar::tab:nth-child({i+1}) {{
+                    min-width: {text_width}px;
+                    max-width: {text_width}px;
+                }}
+            """
+        
+        tab_bar.setStyleSheet(style_sheet + """
+            QTabBar::tab {
+                background: #f0f0f0;
+                border: 1px solid #d0d0d0;
+                border-bottom: none;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+                padding: 6px 12px;
+                margin-right: 2px;
+                color: #505050;
+            }
+            
+            QTabBar::tab:selected {
+                background: white;
+                border-color: #d0d0d0;
+                color: #2c3e50;
+                font-weight: bold;
+            }
+            
+            QTabBar::tab:hover {
+                background: #e8e8e8;
+            }
+        """)
 
     def on_tab_changed(self, index):
         """Обработчик смены вкладки"""
