@@ -53,3 +53,35 @@ class QualityCalculator:
 
         # Возвращаем вектор нормализованных значений
         return pd.Series(normalized_scores)
+    
+    @staticmethod
+    def calculate_actual_best_worst(df, constraints):
+        best_worst = {}
+        
+        for param, config in constraints.items():
+            values = df[param]
+            constraint_type = config['type']
+            
+            if constraint_type == 'range':
+                a, b = config['min'], config['max']
+                mid = (a + b) / 2
+                # Худшее значение: максимальное отклонение от центра
+                worst_idx = values.apply(lambda p: abs(p - mid)).idxmax()
+                best = mid
+                worst = values.loc[worst_idx]
+                
+            elif constraint_type == 'min':
+                best = values.max()
+                worst = values.min()
+                
+            elif constraint_type == 'max':
+                best = values.min()
+                worst = values.max()
+                
+            elif constraint_type == 'fixed':
+                best = True
+                worst = False
+                
+            best_worst[param] = {'best': best, 'worst': worst}
+            
+        return best_worst
