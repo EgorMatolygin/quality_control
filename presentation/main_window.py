@@ -313,6 +313,22 @@ class StaticResultsPage(QWidget):
         content_widget.setLayout(content_layout)
         main_layout.addWidget(content_widget, 1)
 
+          # Добавляем кнопку перехода
+        self.btn_metrics = QPushButton("Таблица метрик →")
+        self.btn_metrics.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                padding: 8px 16px;
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #45a049; }
+        """)
+        self.btn_metrics.clicked.connect(self.parent.show_metrics_table)
+        
+        # Добавляем в layout (перед кнопкой Назад)
+        main_layout.addWidget(self.btn_metrics)
+
         # Кнопка Назад
         self.btn_back = QPushButton("← Назад к вводу")
         main_layout.addWidget(self.btn_back, alignment=Qt.AlignRight)
@@ -1140,6 +1156,105 @@ class DynamicResultsPage(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "Ошибка", f"Ошибка прогноза: {str(e)}")
 
+class MetricsTablePage(QWidget):
+    def __init__(self, parent):
+        super().__init__()
+        self.parent = parent
+        self.init_ui()
+        self.setStyleSheet("background-color: #f0f0f0;")
+
+    def init_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(12, 12, 12, 12)
+
+        # Заголовок
+        self.header = QLabel("Перекрестная таблица метрик", self)
+        self.header.setFont(QFont('Arial', 18, QFont.Bold))
+        self.header.setAlignment(Qt.AlignCenter)
+        self.header.setStyleSheet("""
+            background-color: #4A90E2;
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+        """)
+        main_layout.addWidget(self.header)
+
+        # Селектор партий
+        self.batch_combo = QComboBox()
+        self.batch_combo.currentIndexChanged.connect(self.update_table)
+        main_layout.addWidget(self.batch_combo)
+
+        # Таблица
+        self.table = QTableWidget()
+        self.table.setStyleSheet("""
+            QTableWidget {
+                background: white;
+                border-radius: 6px;
+                gridline-color: #e0e0e0;
+            }
+            QHeaderView::section {
+                background: #f8f8f8;
+                padding: 6px;
+            }
+        """)
+        main_layout.addWidget(self.table)
+
+        # Кнопки
+        btn_layout = QHBoxLayout()
+        self.btn_back = QPushButton("← Назад")
+        self.btn_back.clicked.connect(lambda: self.parent.show_results('static'))
+        btn_layout.addWidget(self.btn_back)
+        main_layout.addLayout(btn_layout)
+
+    def update_batches(self):
+        """Обновляет список партий"""
+        self.batch_combo.clear()
+        df = self.parent.current_static_data
+        if df is not None and 'batch_id' in df.columns:
+            self.batch_combo.addItem("Все партии")
+            batches = df['batch_id'].astype(str).unique().tolist()
+            self.batch_combo.addItems(batches)
+
+    def update_table(self):
+        """Обновляет таблицу метрик"""
+        df = self.parent.current_static_data
+        if df is None:
+            return
+
+        # Фильтрация по партии
+        batch = self.batch_combo.currentText()
+        if batch != "Все партии" and 'batch_id' in df.columns:
+            df = df[df['batch_id'].astype(str) == batch]
+
+        # Подготовка данных
+        params = [col for col in df.columns 
+                if col not in ['id', 'timestamp', 'batch_id', 'product_id', 'date']]
+        metrics = ['Среднее', 'Медиана', 'Ст. отклонение', 'Минимум', 'Максимум', 'Количество']
+
+        # Настройка таблицы
+        self.table.setRowCount(len(metrics))
+        self.table.setColumnCount(len(params))
+        self.table.setHorizontalHeaderLabels(params)
+        self.table.setVerticalHeaderLabels(metrics)
+
+        # Заполнение данных
+        for col_idx, param in enumerate(params):
+            if pd.api.types.is_numeric_dtype(df[param]):
+                data = df[param]
+                self.table.setItem(0, col_idx, QTableWidgetItem(f"{data.mean():.2f}"))
+                self.table.setItem(1, col_idx, QTableWidgetItem(f"{data.median():.2f}"))
+                self.table.setItem(2, col_idx, QTableWidgetItem(f"{data.std():.2f}"))
+                self.table.setItem(3, col_idx, QTableWidgetItem(f"{data.min():.2f}"))
+                self.table.setItem(4, col_idx, QTableWidgetItem(f"{data.max():.2f}"))
+                self.table.setItem(5, col_idx, QTableWidgetItem(str(data.count())))
+            else:
+                for row_idx in range(len(metrics)):
+                    self.table.setItem(row_idx, col_idx, QTableWidgetItem("Н/Д"))
+
+        self.table.resizeColumnsToContents()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1157,6 +1272,9 @@ class MainWindow(QMainWindow):
         self.input_page = InputPage(self)
         self.static_results_page = StaticResultsPage(self)
         self.dynamic_results_page = DynamicResultsPage(self)
+
+        # Добавляем новую страницу
+        self.metrics_table_page = MetricsTablePage(self)
         
         # Инициализация UI
         self.init_ui()
@@ -1169,6 +1287,7 @@ class MainWindow(QMainWindow):
         self.stacked_widget.addWidget(self.input_page)
         self.stacked_widget.addWidget(self.static_results_page)
         self.stacked_widget.addWidget(self.dynamic_results_page)
+        self.stacked_widget.addWidget(self.metrics_table_page)
         
         self.setCentralWidget(self.stacked_widget)
 
@@ -1200,3 +1319,9 @@ class MainWindow(QMainWindow):
 
     def show_input(self):
         self.stacked_widget.setCurrentIndex(0)
+
+    def show_metrics_table(self):
+        """Показывает страницу с таблицей метрик"""
+        self.metrics_table_page.update_batches()
+        self.metrics_table_page.update_table()
+        self.stacked_widget.setCurrentWidget(self.metrics_table_page)
