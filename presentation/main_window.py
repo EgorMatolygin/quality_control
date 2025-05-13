@@ -313,25 +313,41 @@ class StaticResultsPage(QWidget):
         content_widget.setLayout(content_layout)
         main_layout.addWidget(content_widget, 1)
 
-          # Добавляем кнопку перехода
-        self.btn_metrics = QPushButton("Таблица метрик →")
-        self.btn_metrics.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                padding: 8px 16px;
-                border-radius: 4px;
-            }
-            QPushButton:hover { background-color: #45a049; }
-        """)
-        self.btn_metrics.clicked.connect(self.parent.show_metrics_table)
-        
-        # Добавляем в layout (перед кнопкой Назад)
-        main_layout.addWidget(self.btn_metrics)
-
-        # Кнопка Назад
+        # Кнопки навигации
         self.btn_back = QPushButton("← Назад к вводу")
-        main_layout.addWidget(self.btn_back, alignment=Qt.AlignRight)
+        self.btn_metrics = QPushButton("Таблица метрик →")
+        
+        # Общий стиль для кнопок
+        button_style = """
+            QPushButton {
+                background-color: #4A90E2;
+                color: white;
+                padding: 10px 20px;
+                border-radius: 5px;
+                border: none;
+                font-size: 14px;
+                min-width: 120px;
+            }
+            QPushButton:hover {
+                background-color: #357ABD;
+            }
+            QPushButton:pressed {
+                background-color: #2A5F8F;
+            }
+        """
+        self.btn_back.setStyleSheet(button_style)
+        self.btn_metrics.setStyleSheet(button_style)
+
+        # Контейнер для кнопок
+        button_container = QWidget()
+        button_layout = QHBoxLayout(button_container)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.addWidget(self.btn_back)
+        button_layout.addStretch()  # Растягивающееся пространство между кнопками
+        button_layout.addWidget(self.btn_metrics)
+
+        self.btn_back.clicked.connect(self.parent.show_input)
+        self.btn_metrics.clicked.connect(self.parent.show_metrics_table)
 
         # Общие стили
         self.setStyleSheet("""
@@ -348,8 +364,8 @@ class StaticResultsPage(QWidget):
                 border-radius: 6px;
             }
         """)
-        self.btn_back.clicked.connect(self.parent.show_input)
-        main_layout.addWidget(self.btn_back, alignment=Qt.AlignRight)
+       
+        main_layout.addWidget(button_container)
 
         self.setLayout(main_layout)
 
