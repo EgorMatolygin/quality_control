@@ -260,44 +260,6 @@ class StaticResultsPage(QWidget):
                 background: white;
                 margin-top: 4px;
             }
-            
-            QTabBar::tab {
-                background: #e8e8e8;
-                color: #505050;
-                border: 1px solid #d0d0d0;
-                border-bottom: none;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                padding: 8px 16px;
-                margin-right: 4px;
-                font-size: 14px;
-            }
-            
-            QTabBar::tab:selected {
-                background: white;
-                color: #2c3e50;
-                border-color: #d0d0d0;
-                font-weight: bold;
-            }
-            
-            QTabBar::tab:hover {
-                background: #f0f0f0;
-            }
-            
-            QTabBar::tab:!selected {
-                margin-top: 2px;
-            }
-            
-            QTabBar QToolButton {
-                background: #f0f0f0;
-                border: 1px solid #d0d0d0;
-                border-radius: 4px;
-            }
-            QTabWidget::pane {
-                border-top: 2px solid #4A90E2; 
-                margin: 0;  
-                padding: 12px;  
-            }
         """)
         main_layout.addWidget(self.param_tabs)
 
@@ -399,45 +361,78 @@ class StaticResultsPage(QWidget):
     def adjust_tab_sizes(self):
         tab_bar = self.param_tabs.tabBar()
         metrics = QFontMetrics(tab_bar.font())
-        padding = 30  # Уменьшаем избыточные отступы
+        padding = 20
+        
+        # Принудительные настройки для корректного отображения
+        tab_bar.setUsesScrollButtons(True)
+        tab_bar.setElideMode(Qt.ElideNone)
+        tab_bar.setExpanding(False)  # Отключаем автоматическое растяжение
         
         style_sheet = []
         for i in range(tab_bar.count()):
             text = tab_bar.tabText(i)
-            # Правильный расчет с учетом реальных отступов в стилях
             text_width = metrics.horizontalAdvance(text) + 2*padding
             
             style_sheet.append(f"""
                 QTabBar::tab:nth-child({i+1}) {{
                     min-width: {text_width}px;
-                    padding: 8px {padding}px;
+                    max-width: {text_width}px;  # Фиксируем ширину
+                    padding: 6px {padding}px;
+                    font-size: 12px;
                 }}
             """)
         
-        # Общий стиль с улучшенной адаптацией
-        base_style = """
-            QTabBar::tab {
-                background: #e8e8e8;
+        base_style = f"""
+            QTabBar {{
+                min-width: {sum([metrics.horizontalAdvance(tab_bar.tabText(i)) + 2*padding for i in range(tab_bar.count())])}px;
+                background: transparent;
+            }}
+            QTabWidget::pane {{
                 border: 1px solid #d0d0d0;
-                border-bottom: none;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                color: #505050;
-                margin-right: 3px;
-                font-size: 13px;
-                padding: 8px 20px;  # Единый padding для всех вкладок
-            }
-            QTabBar::tab:selected { 
+                margin-top: -1px;
+            }}  
+            QTabBar::tab:selected {{
                 background: white;
                 color: #2c3e50;
                 border-color: #d0d0d0;
                 font-weight: bold;
-            }
+            }}            
+            QTabBar::tab {{
+                background: #e8e8e8;
+                color: #505050;
+                border: 1px solid #d0d0d0;
+                border-bottom: none;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                padding: 8px 16px;
+                margin-right: 4px;
+            }}
+            QTabBar::tab:hover {{
+                background: #f0f0f0;
+            }}
+            QTabBar::tab:!selected {{
+                margin-top: 2px;
+            }}
+            
+            QTabBar QToolButton {{
+                background: #f0f0f0;
+                border: 1px solid #d0d0d0;
+                border-radius: 4px;
+            }}
+            QTabWidget::pane {{
+                border-top: 2px solid #4A90E2; 
+                margin: 0;  
+                padding: 12px;  
+            }}
         """
         
         tab_bar.setStyleSheet('\n'.join(style_sheet) + base_style)
-        tab_bar.setElideMode(Qt.ElideRight)
-        tab_bar.setUsesScrollButtons(True)  # Добавляем кнопки прокрутки
+        
+        # Принудительное обновление layout
+        self.param_tabs.updateGeometry()
+        tab_bar.updateGeometry()
+        tab_bar.update()
+        pass
 
     def on_tab_changed(self, index):
         """Обработчик смены вкладки"""
