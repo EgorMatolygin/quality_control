@@ -205,15 +205,23 @@ class InputPage(QWidget):
             if data is None:
                 raise ValueError("Сначала загрузите данные")
 
-            result_df = QualityCalculator.calculate_quality_index(
+            # Преобразуем результат в DataFrame
+            result_series = QualityCalculator.calculate_quality_index(
                 data,
                 constraints=constraints,
                 analysis_type=analysis_type
             )
+            result_df = result_series.to_frame().T  # Конвертируем Series в DataFrame
 
-            # Сохранение результатов
-            DataManager.save_results(result_df, analysis_type)
+            # Сохраняем результаты расчета
+            if analysis_type == "static":
+                self.parent.static_quality_index = result_df
+                self.parent.static_best_worst = QualityCalculator.calculate_actual_best_worst(data, constraints)
+            else:
+                self.parent.dynamic_quality_index = result_df
+                self.parent.dynamic_best_worst = QualityCalculator.calculate_actual_best_worst(data, constraints)
             
+            # Показываем информационное сообщение
             QMessageBox.information(self, "Успех", 
                 f"Индекс качества для {analysis_type} анализа рассчитан!\n"
                 f"Сохранено в: results/{analysis_type}_results.csv")
@@ -837,6 +845,21 @@ class StaticResultsPage(QWidget):
 
     def _update_stats_table(self, df, param, dtype):
         stats = {}
+        best = 'Н/Д'
+        worst = 'Н/Д'
+        spread = 'Н/Д'
+        quality_index = 'Н/Д'
+
+        # Получаем данные из расчетов
+        if self.parent.static_best_worst and param in self.parent.static_best_worst:
+            best = self.parent.static_best_worst[param].get('best', 'Н/Д')
+            worst = self.parent.static_best_worst[param].get('worst', 'Н/Д')
+            if isinstance(best, (int, float)) and isinstance(worst, (int, float)):
+                spread = best - worst
+
+        if self.parent.static_quality_index is not None and param in self.parent.static_quality_index.columns:
+            quality_index = self.parent.static_quality_index[param].iloc[0]  # Доступ через .columns
+
         if dtype == 'numeric':
             stats = {
                 'Среднее': df[param].mean(),
@@ -845,24 +868,21 @@ class StaticResultsPage(QWidget):
                 'Минимум': df[param].min(),
                 'Максимум': df[param].max(),
                 'Количество': df[param].count(),
-                'За пределами норм': self.stats_cache.get(param, {}).get('out_of_bounds', 0)
-            }
-        else:
-            counts = df[param].value_counts()
-            stats = {
-                'Уникальных значений': counts.shape[0],
-                'Наиболее частый': counts.index[0],
-                'Частота моды': counts.values[0],
-                'Всего записей': counts.sum(),
-                'Недопустимых значений': self.stats_cache.get(param, {}).get('out_of_bounds', 0)
+                'За пределами норм': self.stats_cache.get(param, {}).get('out_of_bounds', 0),
+                'Лучшее значение': best,
+                'Худшее значение': worst,
+                'Разброс': spread,
+                'Индекс качества': quality_index
             }
         
         self.stats_table.setRowCount(len(stats))
         for i, (key, value) in enumerate(stats.items()):
             self.stats_table.setItem(i, 0, QTableWidgetItem(str(key)))
-            self.stats_table.setItem(i, 1, QTableWidgetItem(
-                f"{value:.2f}" if isinstance(value, (float, int)) and not isinstance(value, bool) else str(value)
-            ))
+            if isinstance(value, (float, int)) and not isinstance(value, bool):
+                value_str = f"{value:.2f}"
+            else:
+                value_str = str(value)
+            self.stats_table.setItem(i, 1, QTableWidgetItem(value_str))
 
 class DynamicResultsPage(QWidget):
     def __init__(self, parent):
@@ -1233,7 +1253,6 @@ class MetricsTablePage(QWidget):
             self.batch_combo.addItems(batches)
 
     def update_table(self):
-        """Обновляет таблицу метрик"""
         df = self.parent.current_static_data
         if df is None:
             return
@@ -1243,10 +1262,18 @@ class MetricsTablePage(QWidget):
         if batch != "Все партии" and 'batch_id' in df.columns:
             df = df[df['batch_id'].astype(str) == batch]
 
+        # Получаем дополнительные метрики
+        quality_indexes = self.parent.static_quality_index
+        best_worst = self.parent.static_best_worst
+
         # Подготовка данных
         params = [col for col in df.columns 
                 if col not in ['id', 'timestamp', 'batch_id', 'product_id', 'date']]
-        metrics = ['Среднее', 'Медиана', 'Ст. отклонение', 'Минимум', 'Максимум', 'Количество']
+        metrics = [
+            'Среднее', 'Медиана', 'Ст. отклонение', 
+            'Минимум', 'Максимум', 'Количество',
+            'Индекс качества', 'Лучшее значение', 'Худшее значение'
+        ]
 
         # Настройка таблицы
         self.table.setRowCount(len(metrics))
@@ -1256,6 +1283,7 @@ class MetricsTablePage(QWidget):
 
         # Заполнение данных
         for col_idx, param in enumerate(params):
+            # Базовые метрики
             if pd.api.types.is_numeric_dtype(df[param]):
                 data = df[param]
                 self.table.setItem(0, col_idx, QTableWidgetItem(f"{data.mean():.2f}"))
@@ -1264,6 +1292,16 @@ class MetricsTablePage(QWidget):
                 self.table.setItem(3, col_idx, QTableWidgetItem(f"{data.min():.2f}"))
                 self.table.setItem(4, col_idx, QTableWidgetItem(f"{data.max():.2f}"))
                 self.table.setItem(5, col_idx, QTableWidgetItem(str(data.count())))
+                
+                # Дополнительные метрики
+                if quality_indexes is not None and param in quality_indexes.columns:
+                    self.table.setItem(6, col_idx, QTableWidgetItem(f"{quality_indexes[param].values[0]:.2f}"))
+                
+                if best_worst and param in best_worst:
+                    best = best_worst[param].get('best', 'Н/Д')
+                    worst_val = best_worst[param].get('worst', 'Н/Д')
+                    self.table.setItem(7, col_idx, QTableWidgetItem(str(best)))
+                    self.table.setItem(8, col_idx, QTableWidgetItem(str(worst_val)))
             else:
                 for row_idx in range(len(metrics)):
                     self.table.setItem(row_idx, col_idx, QTableWidgetItem("Н/Д"))
@@ -1291,6 +1329,11 @@ class MainWindow(QMainWindow):
 
         # Добавляем новую страницу
         self.metrics_table_page = MetricsTablePage(self)
+
+        self.static_quality_index = None
+        self.static_best_worst = None
+        self.dynamic_quality_index = None
+        self.dynamic_best_worst = None
         
         # Инициализация UI
         self.init_ui()
