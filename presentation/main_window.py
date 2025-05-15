@@ -187,12 +187,14 @@ class InputPage(QWidget):
                 processed_df = DataProcessor.preprocess_data(self.parent.current_static_data)
                 self.parent.current_static_data = processed_df
                 self.static_table.display_data(processed_df, max_rows=50)
+                self.calculate_index('static')
             else:
                 if self.parent.current_dynamic_data is None:
                     raise ValueError("Нет данных для обработки")
                 processed_df = DataProcessor.preprocess_data(self.parent.current_dynamic_data)
                 self.parent.current_dynamic_data = processed_df
                 self.dynamic_table.display_data(processed_df, max_rows=50)
+                self.calculate_index('dynamic')
             
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Ошибка обработки: {str(e)}")
@@ -221,10 +223,12 @@ class InputPage(QWidget):
                 self.parent.dynamic_quality_index = result_df
                 self.parent.dynamic_best_worst = QualityCalculator.calculate_actual_best_worst(data, constraints)
             
+            print('Рассчитоно: self.parent.dynamic_best_worst')
+            print(self.parent.static_best_worst)
             # Показываем информационное сообщение
-            QMessageBox.information(self, "Успех", 
-                f"Индекс качества для {analysis_type} анализа рассчитан!\n"
-                f"Сохранено в: results/{analysis_type}_results.csv")
+            # QMessageBox.information(self, "Успех", 
+            #     f"Индекс качества для {analysis_type} анализа рассчитан!\n"
+            #     f"Сохранено в: results/{analysis_type}_results.csv")
             
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Ошибка расчета: {str(e)}")
@@ -852,6 +856,7 @@ class StaticResultsPage(QWidget):
 
         # Получаем данные из расчетов
         if self.parent.static_best_worst and param in self.parent.static_best_worst:
+            print()
             best = self.parent.static_best_worst[param].get('best', 'Н/Д')
             worst = self.parent.static_best_worst[param].get('worst', 'Н/Д')
             if isinstance(best, (int, float)) and isinstance(worst, (int, float)):
