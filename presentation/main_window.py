@@ -45,7 +45,7 @@ class InputPage(QWidget):
         self.static_tab = self.create_static_tab()
         self.dynamic_tab = self.create_dynamic_tab()
         
-        self.tabs.addTab(self.static_tab, "Статический анализ")
+        self.tabs.addTab(self.static_tab, "Статический анализ") 
         self.tabs.addTab(self.dynamic_tab, "Динамический анализ")
         
         # Основной лейаут
