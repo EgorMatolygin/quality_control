@@ -223,15 +223,6 @@ class InputPage(QWidget):
                 self.parent.dynamic_quality_index = result_df
                 self.parent.dynamic_best_worst = QualityCalculator.calculate_actual_best_worst(data, constraints)
             
-            print('result_series',result_df)
-            
-            print('Рассчитоно: self.parent.dynamic_best_worst')
-            print(self.parent.static_best_worst)
-            # Показываем информационное сообщение
-            # QMessageBox.information(self, "Успех", 
-            #     f"Индекс качества для {analysis_type} анализа рассчитан!\n"
-            #     f"Сохранено в: results/{analysis_type}_results.csv")
-            
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Ошибка расчета: {str(e)}")
 
@@ -1269,15 +1260,18 @@ class MetricsTablePage(QWidget):
         if batch != "Все партии" and 'batch_id' in df.columns:
             df = df[df['batch_id'].astype(str) == batch]
 
-        # Получаем дополнительные метрики
-        quality_indexes = self.parent.input_page.static_quality_index
-        # Сохраняем результаты расчета
-
+        # Рассчет метрик индекса качества
+        constraints = self.parent.static_constraints
+        result_series = QualityCalculator.calculate_quality_index(
+            df,
+            constraints=constraints,
+            analysis_type='static'
+        )
+        result_df = result_series.to_frame().T 
         self.parent.static_quality_index = result_df
-        self.parent.static_best_worst = QualityCalculator.calculate_actual_best_worst(data, constraints)
+        self.parent.static_best_worst = QualityCalculator.calculate_actual_best_worst(df, constraints)
 
-
-
+        quality_indexes = self.parent.static_quality_index
         best_worst = self.parent.static_best_worst
 
         # Подготовка данных
