@@ -223,6 +223,8 @@ class InputPage(QWidget):
                 self.parent.dynamic_quality_index = result_df
                 self.parent.dynamic_best_worst = QualityCalculator.calculate_actual_best_worst(data, constraints)
             
+            print('result_series',result_df)
+            
             print('Рассчитоно: self.parent.dynamic_best_worst')
             print(self.parent.static_best_worst)
             # Показываем информационное сообщение
@@ -1268,7 +1270,14 @@ class MetricsTablePage(QWidget):
             df = df[df['batch_id'].astype(str) == batch]
 
         # Получаем дополнительные метрики
-        quality_indexes = self.parent.static_quality_index
+        quality_indexes = self.parent.input_page.static_quality_index
+        # Сохраняем результаты расчета
+
+        self.parent.static_quality_index = result_df
+        self.parent.static_best_worst = QualityCalculator.calculate_actual_best_worst(data, constraints)
+
+
+
         best_worst = self.parent.static_best_worst
 
         # Подготовка данных
