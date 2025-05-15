@@ -849,7 +849,6 @@ class StaticResultsPage(QWidget):
 
         # Получаем данные из расчетов
         if self.parent.static_best_worst and param in self.parent.static_best_worst:
-            print()
             best = self.parent.static_best_worst[param].get('best', 'Н/Д')
             worst = self.parent.static_best_worst[param].get('worst', 'Н/Д')
             if isinstance(best, (int, float)) and isinstance(worst, (int, float)):
@@ -1138,6 +1137,8 @@ class DynamicResultsPage(QWidget):
                 name='История',
                 line=dict(color='#1f77b4', width=2)
             ))
+
+            print("# 1. Исторические данные")
             
             # 2. Прогноз 
             fig.add_trace(go.Scatter(
@@ -1148,10 +1149,12 @@ class DynamicResultsPage(QWidget):
                 line=dict(color='#ff7f0e', width=3, dash='solid'),
                 marker=dict(size=8, symbol='diamond')
             ))
+
+            print("# 2. Прогноз")
             
             fig.add_trace(go.Scatter(
                 x=result['conf_int'].index.tolist() + result['conf_int'].index[::-1].tolist(),
-                y=result['conf_int'][0].tolist() + result['conf_int'][1][::-1].tolist(),
+                y=result['conf_int']['lower'].tolist() + result['conf_int']['upper'][::-1].tolist(),
                 fill='toself',
                 fillcolor='rgba(255,127,14,0.2)',
                 line=dict(color='rgba(255,255,255,0)'),
@@ -1166,6 +1169,8 @@ class DynamicResultsPage(QWidget):
                     annotation_text=f"Min: {min_limit}",
                     annotation_position="bottom right"
                 )
+
+            print("# Добавляем линии ограничений")
             
             if max_limit is not None:
                 fig.add_hline(
@@ -1174,7 +1179,9 @@ class DynamicResultsPage(QWidget):
                     annotation_text=f"Max: {max_limit}",
                     annotation_position="top right"
                 )
-            
+
+            print("# Добавляем линии ограничений")
+
             # Настройка макета
             fig.update_layout(
                 title=f'Прогноз {param} с ограничениями',
@@ -1184,7 +1191,7 @@ class DynamicResultsPage(QWidget):
                 margin=dict(l=50, r=50, t=80, b=50),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02)
             )
-            
+        
             self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
 
         except Exception as e:
