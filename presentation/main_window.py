@@ -1,7 +1,7 @@
 # presentation/main_window.py
 from PyQt5.QtWidgets import (QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QFileDialog, QMessageBox, QLabel, QGroupBox, QFormLayout, QComboBox, QLineEdit, 
-                            QGridLayout, QScrollArea, QCheckBox, QTableWidget,QTableWidgetItem, QStackedWidget, QHeaderView, QSizePolicy)
+                            QGridLayout, QScrollArea, QCheckBox, QTableWidget,QTableWidgetItem, QStackedWidget, QHeaderView, QSizePolicy, QProgressDialog)
 from PyQt5.QtGui import QIcon, QFont, QFontMetrics
 from PyQt5.QtCore import Qt
 from presentation.widgets.table_widget import TableWidget
@@ -20,6 +20,12 @@ import plotly.express as px
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 import pandas as pd
 import numpy as np
+
+import tempfile
+import shutil
+import zipfile
+import os
+import re
 
 class InputPage(QWidget):
     def __init__(self, parent):
@@ -1284,21 +1290,28 @@ class MetricsTablePage(QWidget):
         """)
         main_layout.addWidget(self.table)
 
-        # Кнопки
         btn_layout = QHBoxLayout()
         self.btn_back = QPushButton("← Назад")
         self.btn_back.clicked.connect(lambda: self.parent.show_results('static'))
         
-        self.btn_export = QPushButton("Экспорт таблицы")
-        self.btn_export.setIcon(QIcon('resources/export_icon.png'))  # Добавьте иконку при наличии
-        self.btn_export.clicked.connect(self.export_metrics)
+        self.btn_export = QPushButton("Экспортировать все партии в ZIP")
+        self.btn_export.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                padding: 8px 16px;
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #45a049; }
+        """)
+        self.btn_export.clicked.connect(self.export_all_batches)
         
-        self.format_combo = QComboBox()
-        self.format_combo.addItems(["Excel (*.xlsx)", "CSV (*.csv)"])
+        self.cb_include_all = QCheckBox("Включая сводку по всем партиям")
+        self.cb_include_all.setChecked(True)
         
         btn_layout.addWidget(self.btn_back)
         btn_layout.addStretch()
-        btn_layout.addWidget(self.format_combo)
+        # btn_layout.addWidget(self.cb_include_all)
         btn_layout.addWidget(self.btn_export)
         
         main_layout.addLayout(btn_layout)
@@ -1313,12 +1326,12 @@ class MetricsTablePage(QWidget):
             QPushButton:hover { background-color: #45a049; }
         """)
 
-        self.format_combo.setStyleSheet("""
-            QComboBox {
-                padding: 5px;
-                min-width: 120px;
-            }
-        """)
+        # self.format_combo.setStyleSheet("""
+        #     QComboBox {
+        #         padding: 5px;
+        #         min-width: 120px;
+        #     }
+        # """)
 
     def update_batches(self):
         """Обновляет список партий"""
@@ -1425,47 +1438,6 @@ class MetricsTablePage(QWidget):
             return (data > constraints['value']).sum()
             
         return 0
-    
-    def export_metrics(self):
-        """Экспорт таблицы метрик в файл"""
-        try:
-            # Собираем данные из таблицы
-            df = self.get_table_data()
-            
-            if df.empty:
-                QMessageBox.warning(self, "Ошибка", "Нет данных для экспорта")
-                return
-
-            # Выбор файла
-            file_filter = self.format_combo.currentText()
-            file_path, _ = QFileDialog.getSaveFileName(
-                self,
-                "Сохранить таблицу метрик",
-                "",
-                file_filter
-            )
-            
-            if not file_path:
-                return  # Пользователь отменил сохранение
-
-            # Сохранение в выбранном формате
-            if file_path.endswith('.xlsx'):
-                df.to_excel(file_path, index=False, engine='openpyxl')
-            elif file_path.endswith('.csv'):
-                df.to_csv(file_path, index=False, encoding='utf-8-sig')
-            
-            QMessageBox.information(
-                self,
-                "Экспорт завершен",
-                f"Данные успешно сохранены в файл:\n{file_path}"
-            )
-            
-        except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Ошибка экспорта",
-                f"Произошла ошибка при экспорте данных:\n{str(e)}"
-            )
 
     def get_table_data(self):
         """Преобразует данные таблицы в DataFrame"""
@@ -1504,6 +1476,149 @@ class MetricsTablePage(QWidget):
                 f"Ошибка преобразования данных таблицы:\n{str(e)}"
             )
             return pd.DataFrame()
+    
+    def export_all_batches(self):
+        """Экспорт метрик для всех партий в ZIP-архив"""
+        try:
+            # Получаем список всех партий
+            batches = self.get_available_batches()
+            
+            # Создаем временную директорию
+            temp_dir = tempfile.mkdtemp()
+            exported_files = []
+
+            # Прогресс-диалог
+            progress = QProgressDialog("Экспорт данных...", "Отмена", 0, len(batches), self)
+            progress.setWindowModality(Qt.WindowModal)
+
+            for i, batch in enumerate(batches):
+                progress.setValue(i)
+                progress.setLabelText(f"Обработка партии: {batch}...")
+                
+                if progress.wasCanceled():
+                    break
+
+                # Генерируем данные для партии
+                df = self.generate_batch_metrics(batch)
+                
+                # Создаем безопасное имя файла
+                safe_name = self.sanitize_filename(batch)
+                file_path = os.path.join(temp_dir, f"{safe_name}.xlsx")
+                
+                # Сохраняем в Excel
+                df.to_excel(file_path, index=False, engine='openpyxl')
+                exported_files.append(file_path)
+
+            # Добавляем общую сводку
+            if self.cb_include_all.isChecked():
+                df_all = self.generate_batch_metrics("Все партии")
+                file_path = os.path.join(temp_dir, "Все_партии.xlsx")
+                df_all.to_excel(file_path, index=False, engine='openpyxl')
+                exported_files.append(file_path)
+
+            progress.close()
+
+            # Предлагаем сохранить архив
+            zip_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Сохранить архив с метриками",
+                "",
+                "ZIP Archives (*.zip)"
+            )
+            
+            if not zip_path:
+                shutil.rmtree(temp_dir)
+                return
+
+            # Создаем ZIP-архив
+            with zipfile.ZipFile(zip_path, 'w') as zipf:
+                for file in exported_files:
+                    zipf.write(file, os.path.basename(file))
+
+            # Удаляем временные файлы
+            shutil.rmtree(temp_dir)
+
+            QMessageBox.information(
+                self,
+                "Экспорт завершен",
+                f"Архив успешно сохранен:\n{zip_path}\n\n"
+                f"Экспортировано партий: {len(exported_files)}"
+            )
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Ошибка экспорта",
+                f"Произошла ошибка при создании архива:\n{str(e)}"
+            )
+            if 'temp_dir' in locals():
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def get_available_batches(self):
+        """Возвращает список всех уникальных партий"""
+        df = self.parent.current_static_data
+        batches = []
+        
+        if df is not None and 'batch_id' in df.columns:
+            batches = df['batch_id'].astype(str).unique().tolist()
+        
+        return batches
+    
+    def generate_batch_metrics(self, batch_name):
+        """Генерирует DataFrame с метриками для указанной партии"""
+        df = self.parent.current_static_data.copy()
+        
+        if batch_name != "Все партии" and 'batch_id' in df.columns:
+            df = df[df['batch_id'].astype(str) == batch_name]
+
+        # Рассчет метрик
+        constraints = self.parent.static_constraints
+        quality_index = QualityCalculator.calculate_quality_index(
+            df, constraints, 'static'
+        )
+        best_worst = QualityCalculator.calculate_actual_best_worst(df, constraints)
+
+        # Сбор данных
+        metrics = []
+        params = [col for col in df.columns 
+                if col not in ['id', 'timestamp', 'batch_id', 'product_id', 'date']]
+        
+        for param in params:
+            param_metrics = {
+                'Параметр': param,
+                'Тип данных': 'Числовой' if pd.api.types.is_numeric_dtype(df[param]) else 'Категориальный'
+            }
+            
+            if pd.api.types.is_numeric_dtype(df[param]):
+                data = df[param]
+                param_metrics.update({
+                    'Среднее': data.mean(),
+                    'Медиана': data.median(),
+                    'Ст. отклонение': data.std(),
+                    'Минимум': data.min(),
+                    'Максимум': data.max(),
+                    'Количество': data.count(),
+                    'За пределами норм': self.calculate_out_of_bounds(data, constraints.get(param, {})),
+                    'Лучшее значение': best_worst.get(param, {}).get('best', ''),
+                    'Худшее значение': best_worst.get(param, {}).get('worst', ''),
+                    'Разброс': best_worst.get(param, {}).get('best', 0) - best_worst.get(param, {}).get('worst', 0),
+                    'Индекс качества': quality_index.get(param, '')
+                })
+            else:
+                param_metrics.update({
+                    'Количество категорий': df[param].nunique(),
+                    'Самая частая категория': df[param].mode()[0] if not df[param].empty else '',
+                    'Количество значений': df[param].count()
+                })
+            
+            metrics.append(param_metrics)
+        
+        return pd.DataFrame(metrics)
+
+    def sanitize_filename(self, name):
+        """Очищает имя файла от недопустимых символов"""
+        cleaned = re.sub(r'[\\/*?:"<>|]', "_", str(name))
+        return cleaned[:50].strip()
 
 class MainWindow(QMainWindow):
     def __init__(self):
