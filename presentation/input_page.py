@@ -30,24 +30,97 @@ import re
 class InputPage(QWidget):
     def __init__(self, parent):
         super().__init__()
-        self.parent = parent  # MainWindow instance
+        self.parent = parent
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #f5f5f5;
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
+            QTabWidget::pane {
+                border: 1px solid #cccccc;
+                border-radius: 4px;
+                margin: 8px;
+                background: white;
+            }
+            QTabBar::tab {
+                background: #e0e0e0;
+                border: 1px solid #cccccc;
+                padding: 8px 16px;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+                color: #666666;
+            }
+            QTabBar::tab:selected {
+                background: white;
+                border-bottom: 2px solid #2196F3;
+                color: #2196F3;
+                font-weight: bold;
+            }
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                min-width: 120px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+            QPushButton:disabled {
+                background-color: #90CAF9;
+                color: #e0e0e0;
+            }
+            QTableWidget {
+                background-color: white;
+                border: 1px solid #dddddd;
+                border-radius: 4px;
+                alternate-background-color: #f8f9fa;
+            }
+            QHeaderView::section {
+                background-color: #f8f9fa;
+                padding: 8px;
+                border: none;
+                border-bottom: 2px solid #dee2e6;
+            }
+            QGroupBox {
+                border: 1px solid #dee2e6;
+                border-radius: 4px;
+                margin-top: 16px;
+                padding-top: 24px;
+                font-weight: bold;
+                color: #444444;
+            }
+            QLineEdit, QComboBox {
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                padding: 4px;
+                min-width: 120px;
+            }
+            QScrollArea {
+                border: none;
+                background: transparent;
+            }
+        """)
         self.init_ui()
 
     def init_ui(self):
         # Заголовок
-        self.setMaximumHeight(1000)
         self.header = QLabel("Система анализа качества продукции", self)
-        self.header.setFont(QFont('Georgia', 16))
+        self.header.setFont(QFont('Georgia', 18, QFont.Bold))
         self.header.setAlignment(Qt.AlignCenter)
         self.header.setStyleSheet("""
-            background-color: #666666;
-            color: #ffffff;
-            padding: 15px;
-            border-radius: 10px;
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                stop:0 #2196F3, stop:1 #64B5F6);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 16px;
         """)
-        
+
         # Вкладки
         self.tabs = QTabWidget()
+        self.tabs.setObjectName("mainTabs")
         self.static_tab = self.create_static_tab()
         self.dynamic_tab = self.create_dynamic_tab()
         
@@ -56,6 +129,8 @@ class InputPage(QWidget):
         
         # Основной лейаут
         layout = QVBoxLayout()
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(20)
         layout.addWidget(self.header)
         layout.addWidget(self.tabs)
         self.setLayout(layout)
@@ -63,61 +138,79 @@ class InputPage(QWidget):
     def create_static_tab(self):
         widget = QWidget()
         layout = QVBoxLayout()
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(16)
 
         # Кнопки управления
         btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(12)
         self.btn_load_static = QPushButton("Загрузить CSV/Excel")
-        self.btn_load_static.clicked.connect(lambda: self.load_data("static"))
+        self.btn_load_static.setIcon(QIcon(":/icons/download"))
         self.btn_calculate_static = QPushButton("Рассчитать индекс")
-        self.btn_calculate_static.clicked.connect(lambda: self.calculate_index("static"))
+        self.btn_calculate_static.setIcon(QIcon(":/icons/calculate"))
         self.btn_next_static = QPushButton("Анализировать →")
-        self.btn_next_static.clicked.connect(lambda: self.parent.show_results('static'))
+        self.btn_next_static.setIcon(QIcon(":/icons/next"))
         self.btn_next_static.setEnabled(False)
         
         btn_layout.addWidget(self.btn_load_static)
         btn_layout.addWidget(self.btn_calculate_static)
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.btn_next_static)
 
-        # Панель ограничений и таблица
+        # Таблица
         self.static_table = TableWidget()
-        self.static_table.setMinimumWidth(800)
-        self.static_table.setMaximumHeight(300)
-        self.static_constraints_panel = ConstraintsPanel("static", self)
+        self.static_table.setObjectName("dataTable")
+        self.static_table.setMinimumHeight(200)
         
+        # Панель ограничений
+        self.static_constraints_panel = ConstraintsPanel("static", self)
+        self.static_constraints_panel.setMinimumHeight(180)
+
         layout.addLayout(btn_layout)
+        layout.addWidget(self.create_section_header("Загруженные данные"))
         layout.addWidget(self.static_table)
+        layout.addWidget(self.create_section_header("Параметры анализа"))
         layout.addWidget(self.static_constraints_panel)
-        layout.addWidget(self.btn_next_static)
-        #layout.addStretch(1)  # Добавляем растягивающееся пространство
+        
         widget.setLayout(layout)
         return widget
-
+    
     def create_dynamic_tab(self):
         widget = QWidget()
         layout = QVBoxLayout()
-        
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(16)
+
         # Кнопки управления
         btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(12)
         self.btn_load_dynamic = QPushButton("Загрузить CSV/Excel")
-        self.btn_load_dynamic.clicked.connect(lambda: self.load_data("dynamic"))
+        self.btn_load_dynamic.setIcon(QIcon(":/icons/download"))
         self.btn_calculate_dynamic = QPushButton("Рассчитать индекс")
-        self.btn_calculate_dynamic.clicked.connect(lambda: self.calculate_index("dynamic"))
+        self.btn_calculate_dynamic.setIcon(QIcon(":/icons/calculate"))
         self.btn_next_dynamic = QPushButton("Анализировать →")
-        self.btn_next_dynamic.clicked.connect(lambda: self.parent.show_results('dynamic'))
+        self.btn_next_dynamic.setIcon(QIcon(":/icons/next"))
         self.btn_next_dynamic.setEnabled(False)
         
         btn_layout.addWidget(self.btn_load_dynamic)
         btn_layout.addWidget(self.btn_calculate_dynamic)
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.btn_next_dynamic)
 
-        # Панель ограничений и таблица
+        # Таблица
         self.dynamic_table = TableWidget()
-        self.dynamic_table.setMinimumWidth(800)
-        self.dynamic_table.setMaximumHeight(300)
-        self.dynamic_constraints_panel = ConstraintsPanel("dynamic", self)
+        self.dynamic_table.setObjectName("dataTable")
+        self.dynamic_table.setMinimumHeight(200)
         
+        # Панель ограничений
+        self.dynamic_constraints_panel = ConstraintsPanel("dynamic", self)
+        self.dynamic_constraints_panel.setMinimumHeight(180)
+
         layout.addLayout(btn_layout)
+        layout.addWidget(self.create_section_header("Загруженные данные"))
         layout.addWidget(self.dynamic_table)
+        layout.addWidget(self.create_section_header("Параметры анализа"))
         layout.addWidget(self.dynamic_constraints_panel)
-        layout.addWidget(self.btn_next_dynamic)
         
         widget.setLayout(layout)
         return widget
