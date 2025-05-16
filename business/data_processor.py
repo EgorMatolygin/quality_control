@@ -31,8 +31,10 @@ class DataProcessor:
                 iqr = q3 - q1
                 df = df[(df[col] >= q1 - 1.5*iqr) & (df[col] <= q3 + 1.5*iqr)]
 
-            scaler = StandardScaler()
-            df[numeric_cols] = scaler.fit_transform(df[numeric_cols])
+            # scaler = StandardScaler()
+            # df[numeric_cols] = scaler.fit_transform(df[numeric_cols])
+
+
             return df
 
         except Exception as e:

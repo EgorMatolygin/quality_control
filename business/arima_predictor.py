@@ -12,6 +12,7 @@ class ARIMAPredictor:
 
     def predict(self, df, target_col, time_col='timestamp', forecast_steps=5):
         try:
+
             # Проверка входных данных
             if df.empty:
                 raise ValueError("Переданы пустые данные для прогнозирования")

@@ -842,15 +842,15 @@ class StaticResultsPage(QWidget):
 
     def _update_stats_table(self, df, param, dtype):
         stats = {}
-        best = 'Н/Д'
-        worst = 'Н/Д'
-        spread = 'Н/Д'
-        quality_index = 'Н/Д'
+        best = ''
+        worst = ''
+        spread = ''
+        quality_index = ''
 
         # Получаем данные из расчетов
         if self.parent.static_best_worst and param in self.parent.static_best_worst:
-            best = self.parent.static_best_worst[param].get('best', 'Н/Д')
-            worst = self.parent.static_best_worst[param].get('worst', 'Н/Д')
+            best = self.parent.static_best_worst[param].get('best', '')
+            worst = self.parent.static_best_worst[param].get('worst', '')
             if isinstance(best, (int, float)) and isinstance(worst, (int, float)):
                 spread = best - worst
 
@@ -1033,7 +1033,7 @@ class DynamicResultsPage(QWidget):
                 QMessageBox.warning(self, "Ошибка", 
                     f"Партия '{batch}' не найдена в колонке '{batch_col}'\n"
                     f"Доступные партии:\n{', '.join(available_batches)}")
-                return df
+                return df[df[batch_col].astype(str) == batch]
         except Exception as e:
             QMessageBox.warning(self, "Ошибка", f"Ошибка проверки партий: {str(e)}")
             return df
@@ -1090,6 +1090,27 @@ class DynamicResultsPage(QWidget):
                 margin=dict(l=50, r=50, t=60, b=50)
             )
             
+            min_limit, max_limit = self.get_param_constraints(param)
+
+            # Добавляем линии ограничений
+            if min_limit is not None:
+                fig.add_hline(
+                    y=min_limit,
+                    line=dict(color='red', width=2, dash='dash'),
+                    annotation_text=f"Min: {min_limit}",
+                    annotation_position="bottom right"
+                )
+
+            if max_limit is not None:
+                fig.add_hline(
+                    y=max_limit,
+                    line=dict(color='red', width=2, dash='dash'),
+                    annotation_text=f"Max: {max_limit}",
+                    annotation_position="top right"
+                )
+
+            print("# Добавляем линии ограничений")
+
             self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
             
         except Exception as e:
@@ -1099,22 +1120,22 @@ class DynamicResultsPage(QWidget):
         """Запускает прогнозирование ARIMA с ограничениями"""
         try:
             param = self.param_selector.currentText()
-            batch = self.batch_selector.currentText()
             df = self.filter_data()
             
             if df is None or param not in df.columns:
                 return
 
-             # Поиск и проверка временной колонки
+            # Поиск и проверка временной колонки
             time_col = next((col for col in df.columns if col.lower() in ['timestamp', 'time', 'date']), None)
             if not time_col:
                 QMessageBox.warning(self, "Ошибка", "Временная колонка не найдена!")
                 return
 
-            #Прогноз
-            result = self.arima_predictor.predict(df, param, time_col=time_col)
+            time_series = df.groupby(time_col)[param].mean().reset_index()
+            
+            # Прогноз
+            result = self.arima_predictor.predict(time_series, param, time_col=time_col)
 
-            print(result)
             if result is None:
                 return
 
@@ -1122,9 +1143,6 @@ class DynamicResultsPage(QWidget):
             if len(result['forecast']) == 0:
                 QMessageBox.warning(self, "Ошибка", "Невозможно построить прогноз: недостаточно данных")
                 return
-
-            # Получаем ограничения параметра
-            min_limit, max_limit = self.get_param_constraints(param)
 
             # Создаем график
             fig = go.Figure()
@@ -1138,28 +1156,53 @@ class DynamicResultsPage(QWidget):
                 line=dict(color='#1f77b4', width=2)
             ))
 
-            print("# 1. Исторические данные")
-            
-            # 2. Прогноз 
+            # 2. Прогноз с соединением последней точки истории
+            if not result['history'].empty and not result['forecast'].empty:
+                # Создаем переходную точку: последнее историческое значение + первый прогноз
+                transition_point = pd.Series(
+                    [result['history'].iloc[-1], result['forecast'].iloc[0]],
+                    index=[result['history'].index[-1], result['forecast'].index[0]]
+                )
+                forecast_with_transition = pd.concat([transition_point, result['forecast'].iloc[1:]])
+            else:
+                forecast_with_transition = result['forecast']
+
+            # график прогноза
             fig.add_trace(go.Scatter(
-                x=result['forecast'].index,
-                y=result['forecast'].values,
+                x=forecast_with_transition.index,
+                y=forecast_with_transition.values,
                 mode='lines+markers',
                 name='Прогноз',
                 line=dict(color='#ff7f0e', width=3, dash='solid'),
                 marker=dict(size=8, symbol='diamond')
             ))
 
-            print("# 2. Прогноз")
-            
+             # 3. Доверительный интервал с переходной точкой
+            if not result['history'].empty and not result['conf_int'].empty:
+                # Добавляем последнюю историческую точку в доверительный интервал
+                last_hist_value = result['history'].iloc[-1]
+                last_hist_date = result['history'].index[-1]
+                
+                # Создаем "искусственную" точку доверительного интервала
+                hist_conf_row = pd.DataFrame(
+                    {'lower': [last_hist_value], 'upper': [last_hist_value]},
+                    index=[last_hist_date]
+                )
+                # Объединяем с оригинальным интервалом
+                extended_conf_int = pd.concat([hist_conf_row, result['conf_int']])
+            else:
+                extended_conf_int = result['conf_int']
+
             fig.add_trace(go.Scatter(
-                x=result['conf_int'].index.tolist() + result['conf_int'].index[::-1].tolist(),
-                y=result['conf_int']['lower'].tolist() + result['conf_int']['upper'][::-1].tolist(),
+                x=extended_conf_int.index.tolist() + extended_conf_int.index[::-1].tolist(),
+                y=extended_conf_int['lower'].tolist() + extended_conf_int['upper'][::-1].tolist(),
                 fill='toself',
                 fillcolor='rgba(255,127,14,0.2)',
                 line=dict(color='rgba(255,255,255,0)'),
                 name='95% ДИ'
             ))
+
+            min_limit, max_limit = self.get_param_constraints(param)
             
             # Добавляем линии ограничений
             if min_limit is not None:
@@ -1287,7 +1330,8 @@ class MetricsTablePage(QWidget):
         metrics = [
             'Среднее', 'Медиана', 'Ст. отклонение', 
             'Минимум', 'Максимум', 'Количество',
-            'Индекс качества', 'Лучшее значение', 'Худшее значение'
+            'За пределами норм', 'Лучшее значение', 
+            'Худшее значение', 'Разброс', 'Индекс качества'
         ]
 
         # Настройка таблицы
@@ -1298,9 +1342,11 @@ class MetricsTablePage(QWidget):
 
         # Заполнение данных
         for col_idx, param in enumerate(params):
-            # Базовые метрики
             if pd.api.types.is_numeric_dtype(df[param]):
                 data = df[param]
+                constraints = self.parent.static_constraints.get(param, {})
+                
+                # Базовые метрики
                 self.table.setItem(0, col_idx, QTableWidgetItem(f"{data.mean():.2f}"))
                 self.table.setItem(1, col_idx, QTableWidgetItem(f"{data.median():.2f}"))
                 self.table.setItem(2, col_idx, QTableWidgetItem(f"{data.std():.2f}"))
@@ -1308,21 +1354,48 @@ class MetricsTablePage(QWidget):
                 self.table.setItem(4, col_idx, QTableWidgetItem(f"{data.max():.2f}"))
                 self.table.setItem(5, col_idx, QTableWidgetItem(str(data.count())))
                 
-                # Дополнительные метрики
-                if quality_indexes is not None and param in quality_indexes.columns:
-                    self.table.setItem(6, col_idx, QTableWidgetItem(f"{quality_indexes[param].values[0]:.2f}"))
+                # За пределами норм
+                out_of_bounds = self.calculate_out_of_bounds(data, constraints)
+                self.table.setItem(6, col_idx, QTableWidgetItem(str(out_of_bounds)))
                 
-                if best_worst and param in best_worst:
-                    best = best_worst[param].get('best', 'Н/Д')
-                    worst_val = best_worst[param].get('worst', 'Н/Д')
-                    self.table.setItem(7, col_idx, QTableWidgetItem(str(best)))
-                    self.table.setItem(8, col_idx, QTableWidgetItem(str(worst_val)))
+                # Лучшее/худшее
+                best = best_worst.get(param, {}).get('best', '')
+                worst_val = best_worst.get(param, {}).get('worst', '')
+                self.table.setItem(7, col_idx, QTableWidgetItem(str(best)))
+                self.table.setItem(8, col_idx, QTableWidgetItem(str(worst_val)))
+                
+                # Разброс
+                spread = ''
+                if isinstance(best, (int, float)) and isinstance(worst_val, (int, float)):
+                    spread = f"{best - worst_val:.2f}"
+                self.table.setItem(9, col_idx, QTableWidgetItem(spread))
+                
+                # Индекс качества
+                if quality_indexes is not None and param in quality_indexes.columns:
+                    self.table.setItem(10, col_idx, QTableWidgetItem(f"{quality_indexes[param].values[0]:.2f}"))
             else:
                 for row_idx in range(len(metrics)):
-                    self.table.setItem(row_idx, col_idx, QTableWidgetItem("Н/Д"))
+                    self.table.setItem(row_idx, col_idx, QTableWidgetItem(""))
 
         self.table.resizeColumnsToContents()
 
+    def calculate_out_of_bounds(self, data, constraints):
+        """Рассчитывает количество значений за пределами ограничений"""
+        if not constraints:
+            return 0
+            
+        if constraints.get('type') == 'range':
+            min_val = constraints.get('min', -np.inf)
+            max_val = constraints.get('max', np.inf)
+            return ((data < min_val) | (data > max_val)).sum()
+            
+        elif constraints.get('type') == 'min':
+            return (data < constraints['value']).sum()
+            
+        elif constraints.get('type') == 'max':
+            return (data > constraints['value']).sum()
+            
+        return 0
 
 class MainWindow(QMainWindow):
     def __init__(self):
