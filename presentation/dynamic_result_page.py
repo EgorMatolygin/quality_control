@@ -149,21 +149,53 @@ class DynamicResultsPage(QWidget):
         return (None, None)
 
     def filter_data(self):
-        """Фильтрация данных с учетом выбора партии"""
+        """Фильтрация с проверкой существования колонки и значений"""
         df = self.parent.current_dynamic_data
         if df is None:
             return None
 
         batch = self.batch_selector.currentText()
-        batch_col = next((col for col in df.columns if col.lower() in ['batch_id', 'batch']), None)
-
-        if not batch_col or batch == "Все партии":
+        if batch == "Все партии" or batch == "":
             return df
 
-        return df[df[batch_col].astype(str) == batch]
+        # Поиск колонки с партиями с учетом возможных вариантов
+        batch_col = None
+        possible_names = ['batch_id', 'batch', 'lot', 'партия', 'lot_id', 'part_number']
+        for col in df.columns:
+            if col.lower() in possible_names:
+                batch_col = col
+                break
+
+        if not batch_col:
+            QMessageBox.warning(self, "Ошибка", 
+                f"Колонка с партиями не найдена! Доступные колонки:\n{', '.join(df.columns)}")
+            return df
+
+        # Проверка существования выбранной партии
+        try:
+            available_batches = df[batch_col].astype(str).unique()
+            if batch not in available_batches:
+                QMessageBox.warning(self, "Ошибка", 
+                    f"Партия '{batch}' не найдена в колонке '{batch_col}'\n"
+                    f"Доступные партии:\n{', '.join(available_batches)}")
+                return df[df[batch_col].astype(str) == batch]
+        except Exception as e:
+            QMessageBox.warning(self, "Ошибка", f"Ошибка проверки партий: {str(e)}")
+            return df
+
+        # Фильтрация данных
+        try:
+            filtered_df = df[df[batch_col].astype(str) == batch]
+            if filtered_df.empty:
+                QMessageBox.warning(self, "Ошибка", 
+                    f"Нет данных для партии '{batch}' в колонке '{batch_col}'")
+            return filtered_df
+        except Exception as e:
+            QMessageBox.warning(self, "Ошибка", f"Ошибка фильтрации: {str(e)}")
+            return df
 
     def update_plots(self, index=None):
-        """Обновляет график временных рядов для всех партий"""
+        """Обновляет график временных рядов"""
         try:
             param = self.param_selector.currentText()
             df = self.filter_data()
@@ -171,159 +203,184 @@ class DynamicResultsPage(QWidget):
             if df is None or param not in df.columns:
                 return
 
+            # Поиск временной колонки
             time_col = next((col for col in df.columns if col.lower() in ['timestamp', 'time', 'date']), None)
-            batch_col = next((col for col in df.columns if col.lower() in ['batch_id', 'batch']), None)
+            if not time_col:
+                QMessageBox.warning(self, "Ошибка", "Временная колонка не найдена")
+                return
 
+            # Конвертация времени
+            df[time_col] = pd.to_datetime(df[time_col])
+            df = df.sort_values(time_col)
+
+            # Подготовка данных
+            time_series = df.groupby(time_col)[param].mean()
+            
+            # Создание графика
             fig = go.Figure()
-            colors = px.colors.qualitative.Plotly
-
-            # Отображаем все партии если выбрано "Все"
-            batches = df[batch_col].unique() if self.batch_selector.currentText() == "Все партии" else [None]
-
-            for i, batch in enumerate(batches):
-                if batch is not None:
-                    batch_df = df[df[batch_col] == batch]
-                    label = str(batch)
-                else:
-                    batch_df = df
-                    label = "Все данные"
-
-                time_series = batch_df.groupby(time_col)[param].mean()
-                
-                fig.add_trace(go.Scatter(
-                    x=time_series.index,
-                    y=time_series.values,
-                    mode='lines+markers',
-                    name=label,
-                    line=dict(color=colors[i % len(colors)])
-                ))
-
+            fig.add_trace(go.Scatter(
+                x=time_series.index,
+                y=time_series.values,
+                mode='lines+markers',
+                name='Исторические данные',
+                line=dict(color='#1f77b4'))
+            )
+            
+            # Настройка макета
             fig.update_layout(
-                title=f'Динамика {param}',
+                title=f'Динамика параметра {param}',
                 xaxis_title='Время',
                 yaxis_title=param,
-                hovermode='x unified'
+                hovermode='x unified',
+                margin=dict(l=50, r=50, t=60, b=50)
             )
-            self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
+            
+            min_limit, max_limit = self.get_param_constraints(param)
 
+            # Добавляем линии ограничений
+            if min_limit is not None:
+                fig.add_hline(
+                    y=min_limit,
+                    line=dict(color='red', width=2, dash='dash'),
+                    annotation_text=f"Min: {min_limit}",
+                    annotation_position="bottom right"
+                )
+
+            if max_limit is not None:
+                fig.add_hline(
+                    y=max_limit,
+                    line=dict(color='red', width=2, dash='dash'),
+                    annotation_text=f"Max: {max_limit}",
+                    annotation_position="top right"
+                )
+
+            print("# Добавляем линии ограничений")
+
+            self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
+            
         except Exception as e:
             QMessageBox.warning(self, "Ошибка", f"Ошибка построения графика: {str(e)}")
 
     def run_forecast(self):
-        """Запускает прогнозирование ARIMA с доверительными интервалами"""
+        """Запускает прогнозирование ARIMA с ограничениями"""
         try:
             param = self.param_selector.currentText()
-            df = self.parent.current_dynamic_data
+            df = self.filter_data()
             
             if df is None or param not in df.columns:
                 return
 
-            # Определяем колонки
+            # Поиск и проверка временной колонки
             time_col = next((col for col in df.columns if col.lower() in ['timestamp', 'time', 'date']), None)
-            batch_col = next((col for col in df.columns if col.lower() in ['batch_id', 'batch']), None)
+            if not time_col:
+                QMessageBox.warning(self, "Ошибка", "Временная колонка не найдена!")
+                return
+
+            time_series = df.groupby(time_col)[param].mean().reset_index()
             
-            if not time_col or not batch_col:
-                QMessageBox.warning(self, "Ошибка", "Не найдены временная или партийная колонки")
+            # Прогноз
+            result = self.arima_predictor.predict(time_series, param, time_col=time_col)
+
+            if result is None:
+                return
+
+            # Проверка данных прогноза
+            if len(result['forecast']) == 0:
+                QMessageBox.warning(self, "Ошибка", "Невозможно построить прогноз: недостаточно данных")
                 return
 
             # Создаем график
             fig = go.Figure()
-            colors = px.colors.qualitative.Plotly
             
-            # Получаем список партий
-            selected_batch = self.batch_selector.currentText()
-            batches = [selected_batch] if selected_batch != "Все партии" else df[batch_col].unique()
+            # 1. Исторические данные
+            fig.add_trace(go.Scatter(
+                x=result['history'].index,
+                y=result['history'].values,
+                mode='lines+markers',
+                name='История',
+                line=dict(color='#1f77b4', width=2)
+            ))
 
-            for i, batch in enumerate(batches):
-                # Фильтруем данные для партии
-                batch_df = df[df[batch_col].astype(str) == str(batch)]
-                time_series = batch_df.groupby(time_col)[param].mean().reset_index()
+            # 2. Прогноз с соединением последней точки истории
+            if not result['history'].empty and not result['forecast'].empty:
+                # Создаем переходную точку: последнее историческое значение + первый прогноз
+                transition_point = pd.Series(
+                    [result['history'].iloc[-1], result['forecast'].iloc[0]],
+                    index=[result['history'].index[-1], result['forecast'].index[0]]
+                )
+                forecast_with_transition = pd.concat([transition_point, result['forecast'].iloc[1:]])
+            else:
+                forecast_with_transition = result['forecast']
+
+            # график прогноза
+            fig.add_trace(go.Scatter(
+                x=forecast_with_transition.index,
+                y=forecast_with_transition.values,
+                mode='lines+markers',
+                name='Прогноз',
+                line=dict(color='#ff7f0e', width=3, dash='solid'),
+                marker=dict(size=8, symbol='diamond')
+            ))
+
+             # 3. Доверительный интервал с переходной точкой
+            if not result['history'].empty and not result['conf_int'].empty:
+                # Добавляем последнюю историческую точку в доверительный интервал
+                last_hist_value = result['history'].iloc[-1]
+                last_hist_date = result['history'].index[-1]
                 
-                if time_series.empty:
-                    continue
+                # Создаем "искусственную" точку доверительного интервала
+                hist_conf_row = pd.DataFrame(
+                    {'lower': [last_hist_value], 'upper': [last_hist_value]},
+                    index=[last_hist_date]
+                )
+                # Объединяем с оригинальным интервалом
+                extended_conf_int = pd.concat([hist_conf_row, result['conf_int']])
+            else:
+                extended_conf_int = result['conf_int']
 
-                # Прогнозирование
-                result = self.arima_predictor.predict(time_series, param, time_col=time_col)
-                if not result or result['forecast'].empty:
-                    continue
+            fig.add_trace(go.Scatter(
+                x=extended_conf_int.index.tolist() + extended_conf_int.index[::-1].tolist(),
+                y=extended_conf_int['lower'].tolist() + extended_conf_int['upper'][::-1].tolist(),
+                fill='toself',
+                fillcolor='rgba(255,127,14,0.2)',
+                line=dict(color='rgba(255,255,255,0)'),
+                name='95% ДИ'
+            ))
 
-                # Цвет для текущей партии
-                line_color = colors[i % len(colors)]
-                fill_color = f'rgba{(self.hex_to_rgb(line_color), 0.2)}'
-
-                # Исторические данные
-                fig.add_trace(go.Scatter(
-                    x=result['history'].index,
-                    y=result['history'].values,
-                    mode='lines+markers',
-                    name=f'{batch} История',
-                    line=dict(color=line_color, width=2))
+            min_limit, max_limit = self.get_param_constraints(param)
+            
+            # Добавляем линии ограничений
+            if min_limit is not None:
+                fig.add_hline(
+                    y=min_limit,
+                    line=dict(color='red', width=2, dash='dash'),
+                    annotation_text=f"Min: {min_limit}",
+                    annotation_position="bottom right"
                 )
 
-                # Прогноз
-                forecast = result['forecast']
-                fig.add_trace(go.Scatter(
-                    x=forecast.index,
-                    y=forecast.values,
-                    mode='lines+markers',
-                    name=f'{batch} Прогноз',
-                    line=dict(color=line_color, width=2, dash='dash'),
-                    marker=dict(symbol='diamond'))
+            print("# Добавляем линии ограничений")
+            
+            if max_limit is not None:
+                fig.add_hline(
+                    y=max_limit,
+                    line=dict(color='red', width=2, dash='dash'),
+                    annotation_text=f"Max: {max_limit}",
+                    annotation_position="top right"
                 )
 
-                # Доверительный интервал
-                if not result['conf_int'].empty:
-                    # Соединяем последнюю точку истории с первым прогнозом
-                    extended_index = [result['history'].index[-1]] + forecast.index.tolist()
-                    extended_lower = [result['history'].iloc[-1]] + result['conf_int']['lower'].tolist()
-                    extended_upper = [result['history'].iloc[-1]] + result['conf_int']['upper'].tolist()
+            print("# Добавляем линии ограничений")
 
-                    fig.add_trace(go.Scatter(
-                        x=extended_index + extended_index[::-1],
-                        y=extended_upper + extended_lower[::-1],
-                        fill='toself',
-                        fillcolor=fill_color,
-                        line=dict(color='rgba(255,255,255,0)'),
-                        name=f'{batch} 95% ДИ',
-                        hoverinfo='none'
-                    ))
-
-            # Ограничения
-            min_limit, max_limit = self.get_param_constraints(param)
-            if min_limit is not None:
-                fig.add_hline(y=min_limit, line=dict(color='red', dash='dash'), annotation_text="Min Limit")
-            if max_limit is not None:
-                fig.add_hline(y=max_limit, line=dict(color='red', dash='dash'), annotation_text="Max Limit")
-
+            # Настройка макета
             fig.update_layout(
-                title=f'Прогноз {param} с доверительными интервалами',
-                xaxis_title='Дата',
-                yaxis_title=param,
-                hovermode='x unified'
-            )
-            self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
-
-            # Добавляем ограничения
-            min_limit, max_limit = self.get_param_constraints(param)
-            if min_limit is not None:
-                fig.add_hline(y=min_limit, line=dict(color='red', dash='dash'), annotation_text="Min Limit")
-            if max_limit is not None:
-                fig.add_hline(y=max_limit, line=dict(color='red', dash='dash'), annotation_text="Max Limit")
-
-            # Настройка отображения
-            fig.update_layout(
-                title=f'Прогноз {param} по партиям',
+                title=f'Прогноз {param} с ограничениями',
                 xaxis_title='Дата',
                 yaxis_title=param,
                 hovermode='x unified',
-                margin=dict(t=40)
+                margin=dict(l=50, r=50, t=80, b=50),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02)
             )
+        
             self.plot_container.setHtml(fig.to_html(include_plotlyjs='cdn'))
 
         except Exception as e:
             QMessageBox.warning(self, "Ошибка", f"Ошибка прогноза: {str(e)}")
-    
-    def hex_to_rgb(self, hex_color):
-        """Конвертирует hex в RGB tuple"""
-        hex_color = hex_color.lstrip('#')
-        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
