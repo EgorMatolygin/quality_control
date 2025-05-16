@@ -1288,8 +1288,37 @@ class MetricsTablePage(QWidget):
         btn_layout = QHBoxLayout()
         self.btn_back = QPushButton("← Назад")
         self.btn_back.clicked.connect(lambda: self.parent.show_results('static'))
+        
+        self.btn_export = QPushButton("Экспорт таблицы")
+        self.btn_export.setIcon(QIcon('resources/export_icon.png'))  # Добавьте иконку при наличии
+        self.btn_export.clicked.connect(self.export_metrics)
+        
+        self.format_combo = QComboBox()
+        self.format_combo.addItems(["Excel (*.xlsx)", "CSV (*.csv)"])
+        
         btn_layout.addWidget(self.btn_back)
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.format_combo)
+        btn_layout.addWidget(self.btn_export)
+        
         main_layout.addLayout(btn_layout)
+
+        self.btn_export.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                padding: 8px 16px;
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #45a049; }
+        """)
+
+        self.format_combo.setStyleSheet("""
+            QComboBox {
+                padding: 5px;
+                min-width: 120px;
+            }
+        """)
 
     def update_batches(self):
         """Обновляет список партий"""
@@ -1396,6 +1425,85 @@ class MetricsTablePage(QWidget):
             return (data > constraints['value']).sum()
             
         return 0
+    
+    def export_metrics(self):
+        """Экспорт таблицы метрик в файл"""
+        try:
+            # Собираем данные из таблицы
+            df = self.get_table_data()
+            
+            if df.empty:
+                QMessageBox.warning(self, "Ошибка", "Нет данных для экспорта")
+                return
+
+            # Выбор файла
+            file_filter = self.format_combo.currentText()
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Сохранить таблицу метрик",
+                "",
+                file_filter
+            )
+            
+            if not file_path:
+                return  # Пользователь отменил сохранение
+
+            # Сохранение в выбранном формате
+            if file_path.endswith('.xlsx'):
+                df.to_excel(file_path, index=False, engine='openpyxl')
+            elif file_path.endswith('.csv'):
+                df.to_csv(file_path, index=False, encoding='utf-8-sig')
+            
+            QMessageBox.information(
+                self,
+                "Экспорт завершен",
+                f"Данные успешно сохранены в файл:\n{file_path}"
+            )
+            
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Ошибка экспорта",
+                f"Произошла ошибка при экспорте данных:\n{str(e)}"
+            )
+
+    def get_table_data(self):
+        """Преобразует данные таблицы в DataFrame"""
+        try:
+            # Получаем заголовки
+            columns = [
+                self.table.horizontalHeaderItem(i).text() 
+                for i in range(self.table.columnCount())
+            ]
+            
+            # Собираем данные
+            data = []
+            for row in range(self.table.rowCount()):
+                row_data = []
+                for col in range(self.table.columnCount()):
+                    item = self.table.item(row, col)
+                    row_data.append(item.text() if item else "")
+                data.append(row_data)
+            
+            # Создаем DataFrame
+            df = pd.DataFrame(data, columns=columns)
+            
+            # Добавляем метрики в первый столбец
+            metrics = [
+                self.table.verticalHeaderItem(i).text() 
+                for i in range(self.table.rowCount())
+            ]
+            df.insert(0, "Метрика", metrics)
+            
+            return df
+            
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Ошибка данных",
+                f"Ошибка преобразования данных таблицы:\n{str(e)}"
+            )
+            return pd.DataFrame()
 
 class MainWindow(QMainWindow):
     def __init__(self):
