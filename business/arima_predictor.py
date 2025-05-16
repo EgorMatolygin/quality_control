@@ -36,16 +36,30 @@ class ARIMAPredictor:
             last_date = series.index[-1]
             freq = pd.infer_freq(series.index) or 'D'
             
+            # Генерируем даты, включая последнюю дату истории
             future_dates = pd.date_range(
                 start=last_date,
-                periods=forecast_steps + 1,
+                periods=forecast_steps + 1,  # +1 чтобы включить последнюю дату
                 freq=freq
-            )[1:]
+            )
+            
+            # Добавляем последнее значение истории в прогноз и доверительный интервал
+            last_value = series.iloc[-1]
+            forecast = pd.Series(
+                [last_value] + list(forecast),
+                index=future_dates
+            )
+            
+            conf_int = pd.DataFrame(
+                np.vstack(([[last_value, last_value]], conf_int)),
+                index=future_dates,
+                columns=['lower', 'upper']
+            )
 
             return {
                 'history': series,
-                'forecast': pd.Series(forecast, index=future_dates),
-                'conf_int': pd.DataFrame(conf_int, index=future_dates, columns=['lower', 'upper'])
+                'forecast': forecast,
+                'conf_int': conf_int
             }
             
         except Exception as e:
