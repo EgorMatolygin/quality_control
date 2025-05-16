@@ -12,47 +12,27 @@ class ARIMAPredictor:
 
     def predict(self, df, target_col, time_col='timestamp', forecast_steps=5):
         try:
-
-            # Проверка входных данных
             if df.empty:
-                raise ValueError("Переданы пустые данные для прогнозирования")
+                raise ValueError("Нет данных для прогнозирования")
                 
-            # Проверка наличия временной колонки
-            if time_col not in df.columns:
-                raise ValueError(f"Колонка времени '{time_col}' не найдена в данных")
-
-            # Подготовка данных с проверкой уникальности временных меток
             df = df.set_index(pd.to_datetime(df[time_col])).sort_index()
-            
-            # Проверка на наличие нескольких партий в данных
-            batch_candidates = ['batch_id', 'batch', 'lot', 'partia', 'партия', 'lot_id']
-            batch_col = next((col for col in df.columns if col.lower() in batch_candidates), None)
-            if batch_col and df[batch_col].nunique() > 1:
-                raise ValueError("Обнаружено несколько партий в данных для прогноза!")
-
-            # Извлечение временного ряда
             series = df[target_col].dropna()
             
-            if len(series) < 30:
-                raise ValueError(f"Недостаточно данных для прогноза (требуется 30 точек, получено {len(series)})")
-
-            # Автоподбор параметров ARIMA
+            if len(series) < 10:
+                raise ValueError(f"Недостаточно данных ({len(series)} точек)")
+                
             model = auto_arima(
                 series,
                 seasonal=False,
-                trace=True,
-                error_action='ignore',
-                suppress_warnings=True,
+                trace=False,
                 stepwise=True
             )
             
-            # Прогнозирование
             forecast, conf_int = model.predict(
                 n_periods=forecast_steps,
                 return_conf_int=True
             )
 
-            # Генерация дат прогноза
             last_date = series.index[-1]
             freq = pd.infer_freq(series.index) or 'D'
             
@@ -62,13 +42,12 @@ class ARIMAPredictor:
                 freq=freq
             )[1:]
 
-            # Создание результата
             return {
                 'history': series,
-                'forecast': pd.Series(forecast.to_list(), index=future_dates),
+                'forecast': pd.Series(forecast, index=future_dates),
                 'conf_int': pd.DataFrame(conf_int, index=future_dates, columns=['lower', 'upper'])
             }
             
         except Exception as e:
-            QMessageBox.warning(self.parent, "Ошибка ARIMA", str(e))
+            QMessageBox.warning(self.parent, "ARIMA Error", str(e))
             return None
