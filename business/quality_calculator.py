@@ -12,6 +12,8 @@ class QualityCalculator:
             constraint_type = config['type']
             gamma = config.get('gamma', 1)  # Параметр из конфига
 
+            print(123)
+
             # Агрегация значений
             if constraint_type == 'range':
                 a, b = config['min'], config['max']
@@ -19,16 +21,19 @@ class QualityCalculator:
                 aggregated = values.loc[values.apply(lambda p: abs(p - mid)).idxmax()]
                 
             elif constraint_type == 'min':
-                a = config['min']
+                print('прием как слышно:',config )
+                a = config['value']
                 aggregated = values.min()
+                print(aggregated)
                 
             elif constraint_type == 'max':
-                b = config['max']
+                b = config['value']
                 aggregated = values.max()
                 
             elif constraint_type == 'fixed':
                 aggregated = values.all()  # Логическое И для булевых
-                
+
+            print('# Нормализация')   
             # Нормализация
             if constraint_type == 'range':
                 a, b = config['min'], config['max']
@@ -39,11 +44,11 @@ class QualityCalculator:
                     score = 0.0
                     
             elif constraint_type == 'min':
-                a = config['min']
+                a = config['value']
                 score = 1 - (1/(aggregated - a + 1))**gamma if aggregated >= a else 0.0
                 
             elif constraint_type == 'max':
-                b = config['max']
+                b = config['value']
                 score = 1 - (1/(1 + b - aggregated))**gamma if aggregated <= b else 0.0
                 
             elif constraint_type == 'fixed':
@@ -71,6 +76,7 @@ class QualityCalculator:
                 worst = values.loc[worst_idx]
                 
             elif constraint_type == 'min':
+                print("Прием как слышно")
                 best = values.max()
                 worst = values.min()
                 
